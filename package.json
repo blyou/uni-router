@@ -1,6 +1,6 @@
 {
   "name": "@blyou/uni-router",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Type-safe file-system routing for uni-app.",
   "keywords": [
     "file-system-routing",
