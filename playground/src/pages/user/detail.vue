@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { type QueryType } from '@blyou/uni-router'
+import { routes } from '@blyou/uni-router/auto-routes'
 
 const query = definePage({
   style: { navigationBarTitleText: '用户详情' },
@@ -11,6 +12,7 @@ const query = definePage({
 })
 
 console.log('query', query)
+console.log('routes', routes)
 </script>
 
 <template>

@@ -809,6 +809,12 @@ describe('declaration and virtual module generation', () => {
 
     expect(runtimeRoutes(routes, config).map(item => item.tab)).toEqual([true, false])
     const declarations = generateDeclarations(routes, config)
+    expect(declarations).toContain('/* eslint-disable */')
+    expect(declarations).toContain('/* oxlint-disable */')
+    expect(declarations).toContain('/* prettier-ignore */\ndeclare module')
+    expect(declarations).toContain('// @ts-nocheck')
+    expect(declarations).toContain('// biome-ignore-all lint: generated file')
+    expect(declarations).toContain('// dprint-ignore-file')
     expect(declarations).toContain('"/pages/user/detail"')
     expect(declarations).toContain('"id": number')
     expect(declarations).toContain('"preview"?: boolean')
