@@ -1,0 +1,122 @@
+{
+  "name": "@blyou/uni-router",
+  "version": "0.0.0",
+  "description": "Type-safe file-system routing for uni-app.",
+  "keywords": [
+    "file-system-routing",
+    "router",
+    "typescript",
+    "uni-app",
+    "vite"
+  ],
+  "homepage": "https://github.com/blyou/uni-router#readme",
+  "bugs": {
+    "url": "https://github.com/blyou/uni-router/issues"
+  },
+  "license": "MIT",
+  "author": "blyou <youbolincode@163.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blyou/uni-router.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/runtime.cjs",
+  "module": "./dist/runtime.mjs",
+  "types": "./dist/runtime.d.mts",
+  "typesVersions": {
+    "*": {
+      "vite": [
+        "dist/index.d.mts"
+      ],
+      "client": [
+        "dist/client.d.ts"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/runtime.d.mts",
+        "default": "./dist/runtime.mjs"
+      },
+      "require": {
+        "types": "./dist/runtime.d.cts",
+        "default": "./dist/runtime.cjs"
+      }
+    },
+    "./vite": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./client": {
+      "types": "./dist/client.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "dev:h5": "pnpm --filter uni-preset-vue dev:h5",
+    "dev:mp-alipay": "pnpm --filter uni-preset-vue dev:mp-alipay",
+    "dev:mp-weixin": "pnpm --filter uni-preset-vue dev:mp-weixin",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "release": "bumpp",
+    "prepublishOnly": "pnpm run build",
+    "lint": "run-s lint:*",
+    "lint:oxlint": "oxlint . --fix",
+    "lint:eslint": "eslint . --fix --cache",
+    "format": "oxfmt src/",
+    "git:hooks": "pnpm simple-git-hooks",
+    "taze": "pnpx taze -I"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.29.9",
+    "@babel/types": "^7.29.8",
+    "@uni-helper/uni-pages-types": "^0.4.9",
+    "jsonc-parser": "^3.3.1",
+    "magic-string": "^0.30.21",
+    "tinyglobby": "^0.2.17"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.1",
+    "@commitlint/config-conventional": "^21.2.0",
+    "@commitlint/types": "^21.2.0",
+    "@dcloudio/types": "^3.4.32",
+    "@types/node": "^26.1.2",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "@vue/eslint-config-typescript": "^14.9.0",
+    "bumpp": "^12.1.1",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-oxlint": "^1.76.0",
+    "eslint-plugin-vue": "^10.10.0",
+    "lint-staged": "^17.2.0",
+    "npm-run-all2": "^9.0.3",
+    "oxfmt": "^0.61.0",
+    "oxlint": "^1.76.0",
+    "simple-git-hooks": "^2.13.1",
+    "tsdown": "^0.22.14",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "@vue/compiler-sfc": "^3.4.21",
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "packageManager": "pnpm@12.15.0+sha512.b3951d6d6ff4a9f13dc7cf56cd28d2b8eb37dbcc9c68e52e1e1191873ea9f82a017287ab50baadc5ccc494f036c67c0e47eb13608c2fa36f47711b61ea128e61"
+}

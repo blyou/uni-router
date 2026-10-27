@@ -1,0 +1,19 @@
+{
+  "editor.defaultFormatter": "oxc.oxc-vscode",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.oxc": "explicit",
+    "source.fixAll.eslint": "explicit"
+  },
+  "explorer.compactFolders": false,
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.patterns": {
+    "tsconfig.json": "tsconfig.*.json, env.d.ts, typed-router.d.ts",
+    "vite.config.*": "jsconfig*, vitest.config.*, cypress.config.*, playwright.config.*",
+    "package.json": "package-lock.json, pnpm*, .yarnrc*, yarn*",
+    "eslint.config.ts": ".eslint*, eslint*, .oxlint*, oxlint*, .oxfmt*, oxfmt*, .prettier*, prettier*",
+    ".simple-git-hooks.json": ".simple-git-hooks.json, .lintstagedrc*, commitlint*"
+  },
+  "js/ts.tsdk.path": "node_modules\\typescript\\lib",
+  "typescript.tsdk": "node_modules\\typescript\\lib"
+}
