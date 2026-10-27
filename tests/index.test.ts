@@ -25,19 +25,16 @@ declare module '../src/runtime' {
     '/pages/index/index': {
       query: Record<string, never>
       meta: { title: 'Home' }
-      file: 'src/pages/index/index.vue'
       tab: true
     }
     '/pages/user/detail': {
       query: { id: number; preview?: boolean; obj?: { a: number; b: string; c: boolean } }
       meta: { title: 'Detail' }
-      file: 'src/pages/user/detail.vue'
       tab: false
     }
     '/pages/object': {
       query: { obj: Record<string, unknown> }
       meta: object
-      file: 'src/pages/object.vue'
       tab: false
     }
   }
@@ -824,6 +821,7 @@ describe('declaration and virtual module generation', () => {
     expect(declarations).toContain('tab: true')
     expect(declarations).toContain('import type { PageMeta }')
     expect(declarations).toContain('meta: PageMeta')
+    expect(declarations).not.toContain('src/pages/user/detail.vue')
     const virtualModule = generateVirtualModule(routes, config)
     expect(virtualModule).toContain('export const routes')
     expect(virtualModule).toContain('JSON.parse')

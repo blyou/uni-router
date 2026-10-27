@@ -15,13 +15,11 @@ declare module '@blyou/uni-router' {
     "/pages/index/index": {
       query: Record<string, never>
       meta: PageMeta
-      file: "src/pages/index/index.vue"
       tab: true
     }
     "/pages/mine/index": {
       query: Record<string, never>
       meta: PageMeta
-      file: "src/pages/mine/index.vue"
       tab: true
     }
     "/pages/user/detail": {
@@ -31,7 +29,6 @@ declare module '@blyou/uni-router' {
         "obj": { a: number; b: string; c: boolean }
       }
       meta: PageMeta
-      file: "src/pages/user/detail.vue"
       tab: false
     }
   }

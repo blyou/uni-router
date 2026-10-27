@@ -41,7 +41,6 @@ export function generateDeclarations(routes: RouteFileInfo[], config: PagesConfi
       `    ${JSON.stringify(route.path)}: {`,
       `      query: ${queryType(source)}`,
       `      meta: PageMeta`,
-      `      file: ${JSON.stringify(source.file)}`,
       `      tab: ${route.tab}`,
       '    }',
     ].join('\n')

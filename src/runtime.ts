@@ -17,7 +17,6 @@ export interface UniRouteMap {}
 export type RoutePath = Extract<keyof UniRouteMap, string>
 export type RouteQuery<P extends RoutePath> = UniRouteMap[P]['query']
 export type RouteMeta<P extends RoutePath> = UniRouteMap[P]['meta']
-export type RouteFile<P extends RoutePath> = UniRouteMap[P]['file']
 export type TabRoutePath = {
   [P in RoutePath]: UniRouteMap[P]['tab'] extends true ? P : never
 }[RoutePath]
