@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { QueryType } from '@blyou/uni-router'
+import { type QueryType } from '@blyou/uni-router'
 
 const query = definePage({
   style: { navigationBarTitleText: '用户详情' },
@@ -9,6 +9,8 @@ const query = definePage({
     obj: { type: Object as QueryType<{ a: number; b: string; c: boolean }> },
   },
 })
+
+console.log('query', query)
 </script>
 
 <template>

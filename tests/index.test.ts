@@ -15,7 +15,7 @@ import {
   usePageQuery,
 } from '../src/runtime'
 import type { QueryType, RoutePath, RouteQuery } from '../src/runtime'
-import { analyzePage, resolveOptions, scanPages } from '../src/scanner'
+import { analyzePage, createScanCache, resolveOptions, scanPages } from '../src/scanner'
 import { loadSfcParser } from '../src/sfc'
 import type { RouteManifest } from '../src/scanner'
 import type { NormalizedQuerySchema, RouteFileInfo } from '../src/types'
@@ -131,6 +131,20 @@ describe('route types', () => {
     expectTypeOf(query.obj).toEqualTypeOf<{ a: number; b: string; c: boolean }>()
     expectTypeOf(typeAssertions).toBeFunction()
   })
+
+  test('infers page query types from the generated normalized schema', () => {
+    const query = usePageQuery(
+      { id: '1', obj: '{}' },
+      {
+        id: { type: 'number', required: true },
+        preview: { type: 'boolean', required: false },
+        obj: { type: 'object', required: true },
+      },
+    )
+    expectTypeOf(query.id).toEqualTypeOf<number>()
+    expectTypeOf(query.preview).toEqualTypeOf<boolean | undefined>()
+    expectTypeOf(query.obj).toEqualTypeOf<Record<string, unknown>>()
+  })
 })
 
 describe('page scanning', () => {
@@ -163,7 +177,7 @@ describe('page scanning', () => {
   test('recognizes query variables assigned by definePage', () => {
     const source = `<script setup lang="ts">\nconst query = definePage({ query: { id: Number, preview: { type: Boolean, format: JSON.parse }, obj: { type: Object as QueryType<{ a: number }> } } })\n</script>`
     const analysis = analyzePage(source, 'props.vue')
-    expect(analysis.calls[0].propsVariable).toBe('query')
+    expect(analysis.calls[0].queryVariable).toBe('query')
     expect(source.slice(analysis.calls[0].start, analysis.calls[0].end)).toMatch(
       /^const query = definePage/,
     )
@@ -192,14 +206,15 @@ describe('page scanning', () => {
   })
 
   test('rejects empty or non-string conditional compilation platforms', () => {
-    expect(() => analyzePage(
-      `<script setup lang="ts">\ndefinePage({ ifdef: [] })\n</script>`,
-      'mine.vue',
-    )).toThrow('ifdef must be a non-empty array of platform strings')
-    expect(() => analyzePage(
-      `<script setup lang="ts">\ndefinePage({ ifndef: ['MP-WEIXIN', 1] })\n</script>`,
-      'mine.vue',
-    )).toThrow('ifndef must contain non-empty platform strings')
+    expect(() =>
+      analyzePage(`<script setup lang="ts">\ndefinePage({ ifdef: [] })\n</script>`, 'mine.vue'),
+    ).toThrow('ifdef must be a non-empty array of platform strings')
+    expect(() =>
+      analyzePage(
+        `<script setup lang="ts">\ndefinePage({ ifndef: ['MP-WEIXIN', 1] })\n</script>`,
+        'mine.vue',
+      ),
+    ).toThrow('ifndef must contain non-empty platform strings')
   })
 
   test('extracts the homepage flag from definePage', () => {
@@ -214,6 +229,30 @@ describe('page scanning', () => {
     expect(() => analyzePage(source, 'dynamic.vue')).toThrow(
       'Route config must be a static literal',
     )
+  })
+
+  test('rejects unsupported or malformed definePage options', () => {
+    expect(() =>
+      analyzePage(
+        `<script setup lang="ts">\ndefinePage({ type: 'page' })\n</script>`,
+        'unknown.vue',
+      ),
+    ).toThrow('Unknown definePage option "type"')
+    expect(() =>
+      analyzePage(`<script setup lang="ts">\ndefinePage({ style: [] })\n</script>`, 'style.vue'),
+    ).toThrow('style must be a static object')
+    expect(() =>
+      analyzePage(
+        `<script setup lang="ts">\ndefinePage({ needLogin: 'yes' })\n</script>`,
+        'login.vue',
+      ),
+    ).toThrow('needLogin must be a boolean literal')
+    expect(() =>
+      analyzePage(
+        `<script setup lang="ts">\ndefinePage({ query: { id: { type: Number, type: String } } })\n</script>`,
+        'query.vue',
+      ),
+    ).toThrow('Duplicate query field option "type"')
   })
 
   test('scans main and sub-package pages with merged default metadata', async () => {
@@ -252,7 +291,11 @@ describe('page scanning', () => {
 
   test('rejects tabBar on sub-package pages', async () => {
     const root = await fixture()
-    await writePage(root, 'src/shop/cart.vue', `<script setup lang="ts">\ndefinePage({ tabBar: { text: 'Cart' } })\n</script>`)
+    await writePage(
+      root,
+      'src/shop/cart.vue',
+      `<script setup lang="ts">\ndefinePage({ tabBar: { text: 'Cart' } })\n</script>`,
+    )
     const options = resolveOptions({ dirs: [{ src: 'src/shop', subPackage: true }] }, root)
     await expect(scanPages(options)).rejects.toThrow('tabBar pages must be in the main package')
   })
@@ -260,11 +303,18 @@ describe('page scanning', () => {
   test('always places the homepage first and sorts the remaining pages', async () => {
     const root = await fixture()
     await writePage(root, 'src/pages/about.vue')
-    await writePage(root, 'src/pages/home/index.vue', `<script setup lang="ts">\ndefinePage({ homepage: true })\n</script>`)
+    await writePage(
+      root,
+      'src/pages/home/index.vue',
+      `<script setup lang="ts">\ndefinePage({ homepage: true })\n</script>`,
+    )
     await writePage(root, 'src/pages/zeta.vue')
-    const options = resolveOptions({
-      sort: (a, b) => b.path.localeCompare(a.path),
-    }, root)
+    const options = resolveOptions(
+      {
+        sort: (a, b) => b.path.localeCompare(a.path),
+      },
+      root,
+    )
 
     const result = await scanPages(options)
     expect(result.routes.map(item => item.path)).toEqual([
@@ -282,19 +332,68 @@ describe('page scanning', () => {
     expect(options.compilerSfc).toBe('./compiler.cjs')
   })
 
+  test('rejects a declaration file that would overwrite pages.json', () => {
+    expect(() => resolveOptions({ pagesJson: 'src/pages.json', dts: 'src/pages.json' })).toThrow(
+      'pagesJson and dts must point to different files',
+    )
+  })
+
   test('rejects multiple homepage pages', async () => {
     const root = await fixture()
-    await writePage(root, 'src/pages/home/index.vue', `<script setup lang="ts">\ndefinePage({ homepage: true })\n</script>`)
-    await writePage(root, 'src/pages/start/index.vue', `<script setup lang="ts">\ndefinePage({ homepage: true })\n</script>`)
+    await writePage(
+      root,
+      'src/pages/home/index.vue',
+      `<script setup lang="ts">\ndefinePage({ homepage: true })\n</script>`,
+    )
+    await writePage(
+      root,
+      'src/pages/start/index.vue',
+      `<script setup lang="ts">\ndefinePage({ homepage: true })\n</script>`,
+    )
     const options = resolveOptions({}, root)
     await expect(scanPages(options)).rejects.toThrow('Multiple homepage pages are not allowed')
   })
 
   test('rejects homepage on sub-package pages', async () => {
     const root = await fixture()
-    await writePage(root, 'src/shop/index.vue', `<script setup lang="ts">\ndefinePage({ homepage: true })\n</script>`)
+    await writePage(
+      root,
+      'src/shop/index.vue',
+      `<script setup lang="ts">\ndefinePage({ homepage: true })\n</script>`,
+    )
     const options = resolveOptions({ dirs: [{ src: 'src/shop', subPackage: true }] }, root)
     await expect(scanPages(options)).rejects.toThrow('homepage pages must be in the main package')
+  })
+
+  test('reuses cached analyses while reflecting file changes', async () => {
+    const root = await fixture()
+    await writePage(
+      root,
+      'src/pages/index/index.vue',
+      `<script setup lang="ts">\ndefinePage({ style: { navigationBarTitleText: 'First' } })\n</script>`,
+    )
+    const options = resolveOptions({}, root)
+    const cache = createScanCache()
+
+    const first = await scanPages(options, cache)
+    expect(first.routes[0].meta.style).toEqual({ navigationBarTitleText: 'First' })
+    expect(cache.files.size).toBe(1)
+
+    const second = await scanPages(options, cache)
+    expect(second.routes).toEqual(first.routes)
+
+    await writePage(
+      root,
+      'src/pages/index/index.vue',
+      `<script setup lang="ts">\ndefinePage({ style: { navigationBarTitleText: 'Second' } })\n</script>`,
+    )
+    const third = await scanPages(options, cache)
+    expect(third.routes[0].meta.style).toEqual({ navigationBarTitleText: 'Second' })
+
+    await rm(join(root, 'src/pages/index/index.vue'))
+    const fourth = await scanPages(options, cache)
+    expect(fourth.routes).toEqual([])
+    expect(cache.files.size).toBe(0)
   })
 })
 
@@ -365,11 +464,7 @@ describe('pages.json generation', () => {
       'selectedIconPath',
       'text',
     ])
-    expect(Object.keys(result.tabBar?.list?.[1] ?? {})).toEqual([
-      'pagePath',
-      'iconPath',
-      'text',
-    ])
+    expect(Object.keys(result.tabBar?.list?.[1] ?? {})).toEqual(['pagePath', 'iconPath', 'text'])
   })
 
   test('serializes page and tabBar fields in path-first order', async () => {
@@ -399,7 +494,9 @@ describe('pages.json generation', () => {
 
     const result = await updatePagesJson(options, manifest(routes))
     expect(result.content).toMatch(/"path": "pages\/index\/index"[\s\S]*"style"/)
-    expect(result.content).toMatch(/"pagePath": "pages\/index\/index"[\s\S]*"iconPath"[\s\S]*"text"/)
+    expect(result.content).toMatch(
+      /"pagePath": "pages\/index\/index"[\s\S]*"iconPath"[\s\S]*"text"/,
+    )
   })
 
   test('generates uni-app conditional compilation comments for pages and tabBar', async () => {
@@ -426,6 +523,19 @@ describe('pages.json generation', () => {
     const second = await updatePagesJson(options, manifest(routes))
     expect(second.changed).toBe(false)
     expect(second.content).toBe(first.content)
+  })
+
+  test('keeps following entries intact when adding comments to compact JSON', async () => {
+    const root = await fixture()
+    const options = resolveOptions({}, root)
+    await mkdir(dirname(options.pagesJson), { recursive: true })
+    await writeFile(options.pagesJson, '{"pages":[]}', 'utf8')
+    const routes = [route('pages/index/index'), route('pages/mine/index')]
+    routes[1].ifdef = ['WEB']
+
+    const result = await updatePagesJson(options, manifest(routes))
+    expect(result.content).toMatch(/\/\/ #endif\n/)
+    expect(result.content).not.toMatch(/\/\/ #endif[^\n]/)
   })
 
   test('updates JSONC idempotently while retaining comments and unknown fields', async () => {
@@ -459,6 +569,37 @@ describe('pages.json generation', () => {
     const parsed = JSON.parse(result.content) as PagesConfig
     expect(parsed.pages).toEqual([{ path: 'pages/index/index' }])
     expect(parsed.subPackages).toEqual([{ root: 'shop', pages: [{ path: 'cart' }] }])
+  })
+
+  test('removes managed sub-packages that no longer contain pages', () => {
+    const current: PagesConfig = {
+      pages: [{ path: 'pages/index/index' }],
+      subPackages: [{ root: 'shop', pages: [{ path: 'cart' }] }],
+    }
+    const input = manifest([route('pages/index/index')])
+    input.managedSubPackageRoots = ['shop']
+
+    const result = mergePagesConfig(current, input, { merge: true, sort: undefined })
+    expect(result.subPackages).toBeUndefined()
+  })
+
+  test('removes stale subPackages from pages.json when merge is false', async () => {
+    const root = await fixture()
+    const options = resolveOptions({ merge: false }, root)
+    await mkdir(dirname(options.pagesJson), { recursive: true })
+    await writeFile(
+      options.pagesJson,
+      `{\n  "pages": [{ "path": "pages/index/index" }],\n  "subPackages": [{ "root": "shop", "pages": [{ "path": "cart" }] }]\n}`,
+      'utf8',
+    )
+
+    const result = await updatePagesJson(options, manifest([route('pages/index/index')]))
+    const parsed = JSON.parse(result.content) as PagesConfig
+    expect(parsed.subPackages).toBeUndefined()
+
+    const second = await updatePagesJson(options, manifest([route('pages/index/index')]))
+    expect(second.changed).toBe(false)
+    expect(second.content).toBe(result.content)
   })
 
   test('refuses to remove a page still referenced by tabBar', () => {
@@ -601,11 +742,10 @@ describe('pages.json generation', () => {
       tabBar: { list: [{ pagePath: 'pages/user/detail', text: 'Detail' }] },
     }
 
-    const result = mergePagesConfig(
-      current,
-      manifest([route('pages/index/index')]),
-      { merge: false, sort: undefined },
-    )
+    const result = mergePagesConfig(current, manifest([route('pages/index/index')]), {
+      merge: false,
+      sort: undefined,
+    })
     expect(result.tabBar).toBeUndefined()
   })
 
@@ -675,8 +815,11 @@ describe('declaration and virtual module generation', () => {
     expect(declarations).toContain('"obj"?: { a: number }')
     expect(declarations).toContain('query: Record<string, never>')
     expect(declarations).toContain('tab: true')
+    expect(declarations).toContain('import type { PageMeta }')
+    expect(declarations).toContain('meta: PageMeta')
     const virtualModule = generateVirtualModule(routes, config)
     expect(virtualModule).toContain('export const routes')
+    expect(virtualModule).toContain('JSON.parse')
     expect(virtualModule).not.toContain('registerUniRoutes')
   })
 })
@@ -703,28 +846,62 @@ describe('runtime navigation and query parsing', () => {
     })
   })
 
-  test('parses page props through reactive getters', () => {
+  test('parses page props once and returns a read-only cache', () => {
     const props: Record<string, unknown> = { id: '42', preview: 'false' }
+    const format = vi.fn<(value: string) => boolean>(value => JSON.parse(value) as boolean)
     const query = usePageQuery<{
       id: NumberConstructor
       preview: { type: BooleanConstructor; required: false }
     }>(props, {
       id: { type: 'number', required: true },
-      preview: { type: 'boolean', required: false, format: JSON.parse },
+      preview: { type: 'boolean', required: false, format },
     })
     expect(query.id).toBe(42)
     expect(query.preview).toBe(false)
+    expect(query.preview).toBe(false)
+    expect(format).toHaveBeenCalledTimes(1)
+    expect(Object.isFrozen(query)).toBe(true)
+    const descriptor = Object.getOwnPropertyDescriptor(query, 'id')
+    expect(descriptor?.get).toBeUndefined()
+    expect(descriptor?.value).toBe(42)
+    expect(descriptor?.writable).toBe(false)
+
     props.id = '43'
-    expect(query.id).toBe(43)
+    expect(query.id).toBe(42)
+    expect(Reflect.set(query, 'id', 43)).toBe(false)
+    expect(query.id).toBe(42)
     expect(() => usePageQuery({}, { id: { type: 'number', required: true } })).toThrow(
       'Missing required query',
+    )
+  })
+
+  test('returns plain data objects from parseQuery', () => {
+    const parsed = parseQuery('/pages/user/detail', { id: '42', preview: 'false' })
+    expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype)
+    const descriptor = Object.getOwnPropertyDescriptor(parsed, 'id')
+    expect(descriptor).toMatchObject({
+      configurable: true,
+      enumerable: true,
+      value: 42,
+      writable: true,
+    })
+    expect(descriptor?.get).toBeUndefined()
+  })
+
+  test('rejects __proto__ query names from runtime schemas', () => {
+    const schema = JSON.parse(
+      '{"__proto__":{"type":"string","required":true}}',
+    ) as NormalizedQuerySchema
+    const props = JSON.parse('{"__proto__":"value"}') as Record<string, unknown>
+    expect(() => usePageQuery(props, schema)).toThrow(
+      'Query parameter name "__proto__" is not supported',
     )
   })
 
   test('parses and serializes object query values as JSON', () => {
     const uni = mockUni()
     navigateTo({ url: '/pages/object', query: { obj: { a: 1 } } })
-    expect(uni.navigateTo).toHaveBeenCalledWith({ url: '/pages/object?obj={"a":1}' })
+    expect(uni.navigateTo).toHaveBeenCalledWith({ url: '/pages/object?obj=%7B%22a%22%3A1%7D' })
     const query = usePageQuery<{ obj: QueryType<{ a: number }> }>(
       { obj: '{"a":1}' },
       {
@@ -734,6 +911,27 @@ describe('runtime navigation and query parsing', () => {
     expect(query.obj).toEqual({ a: 1 })
     expect(() => usePageQuery({ obj: '1' }, { obj: { type: 'object', required: true } })).toThrow(
       'must be an object',
+    )
+  })
+
+  test('URL-encodes query names and values', () => {
+    const uni = mockUni()
+    const obj = { text: 'a&b #c?d=e', nested: { value: 1 } }
+    navigateTo({ url: '/pages/object', query: { obj } })
+    expect(uni.navigateTo).toHaveBeenCalledWith({
+      url: `/pages/object?obj=${encodeURIComponent(JSON.stringify(obj))}`,
+    })
+  })
+
+  test('reports invalid JSON and unserializable objects with path context', () => {
+    expect(() => parseQuery('/pages/object', { obj: '{invalid' })).toThrow(
+      '/pages/object: Query parameter "obj" must be valid JSON',
+    )
+
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    expect(() => navigateTo({ url: '/pages/object', query: { obj: circular } })).toThrow(
+      'Query parameter "obj" must be JSON serializable',
     )
   })
 

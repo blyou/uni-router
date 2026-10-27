@@ -84,7 +84,12 @@ function queryValue(path: string, name: string, type: string, value: unknown) {
   if (type === 'number' && typeof value === 'number' && Number.isFinite(value)) return String(value)
   if (type === 'boolean' && typeof value === 'boolean') return String(value)
   if (type === 'object' && value !== null && typeof value === 'object') {
-    const serialized = JSON.stringify(value)
+    let serialized: string | undefined
+    try {
+      serialized = JSON.stringify(value)
+    } catch {
+      return error(path, `Query parameter "${name}" must be JSON serializable`)
+    }
     if (serialized === undefined) error(path, `Query parameter "${name}" must be JSON serializable`)
     return serialized
   }
@@ -93,17 +98,17 @@ function queryValue(path: string, name: string, type: string, value: unknown) {
 
 function serializeQuery(route: UniRouteInfo, query: Record<string, unknown> = {}) {
   for (const name of Object.keys(query)) {
-    if (!route.query[name]) error(route.path, `Unknown query parameter "${name}"`)
+    if (!Object.hasOwn(route.query, name)) error(route.path, `Unknown query parameter "${name}"`)
   }
   const pairs: string[] = []
   for (const [name, field] of Object.entries(route.query)) {
-    const value = query[name]
+    const value = Object.hasOwn(query, name) ? query[name] : undefined
     if (value == null) {
       if (field.required) error(route.path, `Missing required query parameter "${name}"`)
       continue
     }
     const serialized = queryValue(route.path, name, field.type, value)
-    pairs.push(`${name}=${serialized}`)
+    pairs.push(`${encodeURIComponent(name)}=${encodeURIComponent(serialized)}`)
   }
   return pairs.length ? `${route.path}?${pairs.join('&')}` : route.path
 }
@@ -136,7 +141,12 @@ function parseValue(route: QueryRoute, name: string, field: NormalizedQueryField
     return number
   }
   if (type === 'object') {
-    const object = JSON.parse(decoded) as unknown
+    let object: unknown
+    try {
+      object = JSON.parse(decoded)
+    } catch {
+      return error(route.path, `Query parameter "${name}" must be valid JSON`)
+    }
     if (object === null || typeof object !== 'object') {
       error(route.path, `Query parameter "${name}" must be an object`)
     }
@@ -150,10 +160,13 @@ function parseValue(route: QueryRoute, name: string, field: NormalizedQueryField
 function parse(route: QueryRoute, query: Record<string, unknown>) {
   const result: Record<string, unknown> = {}
   for (const [name, field] of Object.entries(route.query)) {
-    const value = query[name]
+    const value = Object.hasOwn(query, name) ? query[name] : undefined
     if (value == null) {
       if (field.required) error(route.path, `Missing required query parameter "${name}"`)
       continue
+    }
+    if (name === '__proto__') {
+      error(route.path, 'Query parameter name "__proto__" is not supported')
     }
     result[name] = parseValue(route, name, field, value)
   }
@@ -193,32 +206,40 @@ export function switchTab<P extends TabRoutePath>(options: SwitchTabOptions<P>):
 
 export function parseQuery<P extends RoutePath>(
   path: P,
-  query: Record<string, unknown>,
+  query: Record<string, unknown> = {},
 ): RouteQuery<P> {
   return parse(getRoute(path), query) as RouteQuery<P>
 }
 
+type NormalizedQueryFieldToSchema<F extends NormalizedQueryField> = {
+  type: F['type'] extends 'string'
+    ? StringConstructor
+    : F['type'] extends 'number'
+      ? NumberConstructor
+      : F['type'] extends 'boolean'
+        ? BooleanConstructor
+        : ObjectConstructor
+  required: F['required']
+}
+
+type NormalizedQueryToSchema<S extends NormalizedQuerySchema> = {
+  [K in keyof S]: NormalizedQueryFieldToSchema<S[K]>
+}
+
+export function usePageQuery<S extends NormalizedQuerySchema>(
+  props: Record<string, unknown>,
+  schema: S,
+): PageQuery<NormalizedQueryToSchema<S>>
+export function usePageQuery<Q extends QuerySchema = Record<never, never>>(
+  props: Record<string, unknown>,
+  schema: NormalizedQuerySchema,
+): PageQuery<Q>
 export function usePageQuery<Q extends QuerySchema = Record<never, never>>(
   props: Record<string, unknown>,
   schema: NormalizedQuerySchema,
 ): PageQuery<Q> {
   const route: QueryRoute = { path: 'definePage', query: schema }
-  parse(route, props)
-  const result: Record<string, unknown> = {}
-  for (const [name, field] of Object.entries(schema)) {
-    Object.defineProperty(result, name, {
-      enumerable: true,
-      get: () => {
-        const value = props[name]
-        if (value == null) {
-          if (field.required) error(route.path, `Missing required query parameter "${name}"`)
-          return undefined
-        }
-        return parseValue(route, name, field, value)
-      },
-    })
-  }
-  return result as unknown as PageQuery<Q>
+  return Object.freeze(parse(route, props)) as unknown as PageQuery<Q>
 }
 
 export function definePage<Q extends QuerySchema = Record<never, never>>(

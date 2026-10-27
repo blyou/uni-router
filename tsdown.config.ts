@@ -11,4 +11,5 @@ export default defineConfig({
   exports: false,
   copy: ['src/client.d.ts'],
   format: ['esm', 'cjs'],
+  hash: false,
 })

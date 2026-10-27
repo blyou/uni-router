@@ -1,80 +1,47 @@
-import { isAbsolute, relative, resolve } from 'node:path'
-import MagicString from 'magic-string'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import type { HmrContext, Plugin, ViteDevServer } from 'vite'
 import { generateDeclarations, generateVirtualModule, writeDeclarations } from './generator'
+import type { ResolvedUniRouterOptions } from './options'
 import { updatePagesJson } from './pages-json'
-import { analyzePage, resolveOptions, scanPages } from './scanner'
-import type { ResolvedUniRouterOptions } from './scanner'
-import type { NormalizedQuerySchema, UniRouterOptions } from './types'
+import { createScanCache, resolveOptions, scanPages } from './scanner'
+import type { RouteManifest } from './scanner'
+import { loadSfcParser } from './sfc'
+import { transformPage } from './transform'
+import type { UniRouterOptions } from './types'
+import { inside } from './utils'
 
 const virtualId = '@blyou/uni-router/auto-routes'
 const resolvedVirtualId = `\0${virtualId}`
-
-function inside(file: string, directory: string) {
-  const path = relative(directory, file)
-  return !path || (!path.startsWith('..') && !isAbsolute(path))
-}
-
-function removeImportSpecifiers(code: string, magic: MagicString, analysis: ReturnType<typeof analyzePage>) {
-  if (analysis.calls.some(call => call.propsVariable)) {
-    for (const declaration of analysis.imports) {
-      for (const specifier of declaration.specifiers) {
-        magic.overwrite(specifier.start, specifier.end, 'usePageQuery')
-      }
-    }
-    return
-  }
-  for (const declaration of analysis.imports) {
-    if (declaration.removeAll) {
-      magic.remove(declaration.start, declaration.end)
-      continue
-    }
-    for (const specifier of [...declaration.specifiers].sort((a, b) => b.start - a.start)) {
-      let start = specifier.start
-      let end = specifier.end
-      while (end < code.length && /[ \t]/.test(code[end])) end++
-      if (code[end] === ',') {
-        end++
-        while (end < code.length && /[ \t]/.test(code[end])) end++
-      }
-      else {
-        while (start > declaration.start && /[ \t]/.test(code[start - 1])) start--
-        if (code[start - 1] === ',') start--
-      }
-      magic.remove(start, end)
-    }
-  }
-}
-
-function pageProps(variable: string, schema: NormalizedQuerySchema, formats: Record<string, string> = {}) {
-  const props = Object.entries(schema).map(([name, field]) =>
-    `${JSON.stringify(name)}: { type: String, required: ${field.required} }`,
-  )
-  const query = Object.entries(schema).map(([name, field]) => {
-    const format = formats[name] ? `, format: ${formats[name]}` : ''
-    return `${JSON.stringify(name)}: { type: ${JSON.stringify(field.type)}, required: ${field.required}${format} }`
-  })
-  return `const __uniRouterPageProps = defineProps({ ${props.join(', ')} })\nconst ${variable} = usePageQuery(__uniRouterPageProps, { ${query.join(', ')} })`
-}
 
 export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
   let options: ResolvedUniRouterOptions
   let virtualCode = ''
   let server: ViteDevServer | undefined
   let queue = Promise.resolve()
+  let startupScan = false
+  let lastManifest: RouteManifest | undefined
+  let lastPagesContent: string | undefined
+  let parserPromise: ReturnType<typeof loadSfcParser> | undefined
+  const cache = createScanCache()
 
   const regenerate = () => {
     const run = queue.then(async () => {
-      const nextManifest = await scanPages(options)
+      const nextManifest = await scanPages(options, cache)
       const pages = await updatePagesJson(options, nextManifest)
       const declarations = generateDeclarations(nextManifest.routes, pages.config)
       const dtsChanged = options.dts ? await writeDeclarations(options.dts, declarations) : false
       const nextVirtualCode = generateVirtualModule(nextManifest.routes, pages.config)
       const changed = pages.changed || dtsChanged || nextVirtualCode !== virtualCode
       virtualCode = nextVirtualCode
+      lastManifest = nextManifest
+      lastPagesContent = pages.content
       return changed
     })
-    queue = run.then(() => {}, () => {})
+    queue = run.then(
+      () => {},
+      () => {},
+    )
     return run
   }
 
@@ -92,7 +59,7 @@ export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
 
   const reload = async (file?: string) => {
     const changed = await regenerate()
-    invalidate()
+    if (changed) invalidate()
     if (changed || (file && resolve(file) === options.pagesJson)) {
       server?.ws.send({ type: 'full-reload', path: '*' })
       return true
@@ -100,8 +67,24 @@ export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
     return false
   }
 
+  const pagesJsonChanged = async (file: string) => {
+    try {
+      return (await readFile(file, 'utf8')) !== lastPagesContent
+    } catch {
+      return true
+    }
+  }
+
   const reportWatchError = (error: unknown) => {
     server?.config.logger.error(error instanceof Error ? error.message : String(error))
+  }
+
+  const addWatchFiles = (context: { addWatchFile: (id: string) => void }) => {
+    context.addWatchFile(options.pagesJson)
+    for (const dir of options.dirs) context.addWatchFile(dir.src)
+    for (const route of lastManifest?.routes ?? []) {
+      context.addWatchFile(resolve(options.root, route.file))
+    }
   }
 
   return {
@@ -115,9 +98,12 @@ export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
         config.optimizeDeps.exclude.push('@blyou/uni-router')
       }
       await regenerate()
+      startupScan = true
     },
     async buildStart() {
-      await regenerate()
+      if (startupScan) startupScan = false
+      else await regenerate()
+      addWatchFiles(this)
     },
     resolveId(id) {
       if (id === virtualId) return resolvedVirtualId
@@ -131,38 +117,42 @@ export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
       server.watcher.add([...options.dirs.map(dir => dir.src), options.pagesJson])
       const onStructureChange = (file: string) => {
         if (!relevant(file)) return
-        void reload(file).catch(reportWatchError)
+        const run =
+          resolve(file) === options.pagesJson
+            ? pagesJsonChanged(resolve(file)).then(changed => (changed ? reload(file) : false))
+            : reload(file)
+        void run.catch(reportWatchError)
+      }
+      const onPagesJsonChange = (file: string) => {
+        if (resolve(file) !== options.pagesJson) return
+        void pagesJsonChanged(resolve(file))
+          .then(changed => (changed ? reload(file) : false))
+          .catch(reportWatchError)
       }
       server.watcher.on('add', onStructureChange)
       server.watcher.on('unlink', onStructureChange)
+      server.watcher.on('change', onPagesJsonChange)
     },
     async handleHotUpdate(context: HmrContext) {
       if (!options.watch || !relevant(context.file)) return
+      if (
+        resolve(context.file) === options.pagesJson &&
+        !(await pagesJsonChanged(options.pagesJson))
+      )
+        return
       if (await reload(context.file)) return []
     },
     async watchChange(id) {
-      if (!server && options.watch && relevant(id)) await regenerate()
+      if (server || !options.watch || !relevant(id)) return
+      if (resolve(id) === options.pagesJson && !(await pagesJsonChanged(options.pagesJson))) return
+      await regenerate()
     },
-    transform(code, id) {
-      const file = id.split('?')[0]
-      if (!file.endsWith('.vue') || !code.includes('definePage')) return
-      const analysis = analyzePage(code, file)
-      if (!analysis.calls.length) return
-      const magic = new MagicString(code)
-      for (const call of analysis.calls) {
-        if (call.propsVariable) {
-          if (!analysis.imports.length) {
-            magic.appendLeft(call.start, `import { usePageQuery } from '@blyou/uni-router'\n`)
-          }
-          magic.overwrite(call.start, call.end, pageProps(call.propsVariable, analysis.query ?? {}, analysis.formats))
-        }
-        else magic.remove(call.start, call.end)
-      }
-      removeImportSpecifiers(code, magic, analysis)
-      return {
-        code: magic.toString(),
-        map: magic.generateMap({ source: file, includeContent: true, hires: true }),
-      }
+    async transform(code, id) {
+      if (id.includes('?')) return
+      const file = id
+      if (!/\.(?:vue|nvue|uvue)$/.test(file) || !code.includes('definePage')) return
+      parserPromise ??= loadSfcParser(options.root, options.compilerSfc)
+      return transformPage(code, file, await parserPromise)
     },
   }
 }

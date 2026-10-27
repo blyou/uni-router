@@ -31,26 +31,25 @@ export type ConditionalPlatformToken =
   | 'VUE2'
   | 'VUE3'
   | 'WEB'
-type UnderscorePlatform<T extends string> = T extends `${infer Head}-${infer Tail}`
-  ? `${Head}_${UnderscorePlatform<Tail>}`
-  : T
-export type ConditionalPlatform =
-  | ConditionalPlatformToken
-  | Lowercase<ConditionalPlatformToken>
-  | UnderscorePlatform<ConditionalPlatformToken>
-  | Lowercase<UnderscorePlatform<ConditionalPlatformToken>>
+export type ConditionalPlatform = ConditionalPlatformToken
 
 export type QueryType<T> = ObjectConstructor & { readonly __queryType: T }
-export type QueryConstructor = StringConstructor | NumberConstructor | BooleanConstructor | ObjectConstructor
+export type QueryConstructor =
+  | StringConstructor
+  | NumberConstructor
+  | BooleanConstructor
+  | ObjectConstructor
 export type QueryFormatter<T> = (value: string) => T
-export type QueryField<C extends QueryConstructor = QueryConstructor> = C | {
-  /** 参数类型构造器，如 `String`、`Number`、`Boolean` 或 `Object as QueryType<T>` */
-  type: C
-  /** 是否必填，默认 `true` */
-  required?: boolean
-  /** 自定义解析函数，接收 URL 解码后的字符串，返回值需与 `type` 一致 */
-  format?: QueryFormatter<ConstructorValue<C>>
-}
+export type QueryField<C extends QueryConstructor = QueryConstructor> =
+  | C
+  | {
+      /** 参数类型构造器，如 `String`、`Number`、`Boolean` 或 `Object as QueryType<T>` */
+      type: C
+      /** 是否必填，默认 `true` */
+      required?: boolean
+      /** 自定义解析函数，接收 URL 解码后的字符串，返回值需与 `type` 一致 */
+      format?: QueryFormatter<ConstructorValue<C>>
+    }
 export type QuerySchema = Record<string, QueryField>
 export type RouteQueryValue = 'string' | 'number' | 'boolean' | 'object'
 
@@ -72,9 +71,9 @@ export type PageDefinition<Q extends QuerySchema = Record<never, never>> = Pick<
 > & {
   /** 是否将该页面设为 uni-app 启动首页；有且仅能有一个页面设置 */
   homepage?: boolean
-  /** 仅在指定平台参与编译，值使用 uni-app 条件编译平台标识 */
+  /** 仅在指定平台参与编译，值使用大写 uni-app 条件编译平台标识 */
   ifdef?: ConditionalPlatform[]
-  /** 在指定平台不参与编译，值使用 uni-app 条件编译平台标识 */
+  /** 在指定平台不参与编译，值使用大写 uni-app 条件编译平台标识 */
   ifndef?: ConditionalPlatform[]
   /** 页面参数 schema；导航时据此校验，页面中据此解析 */
   query?: Q
@@ -101,11 +100,13 @@ type OptionalPageQueryKeys<Q extends QuerySchema> = {
   [K in keyof Q]: Q[K] extends { required: false } ? K : never
 }[keyof Q]
 
-export type PageQuery<Q extends QuerySchema> = Readonly<{
-  [K in RequiredPageQueryKeys<Q>]: QueryFieldValue<Q[K]>
-} & {
-  [K in OptionalPageQueryKeys<Q>]?: QueryFieldValue<Q[K]>
-}>
+export type PageQuery<Q extends QuerySchema> = Readonly<
+  {
+    [K in RequiredPageQueryKeys<Q>]: QueryFieldValue<Q[K]>
+  } & {
+    [K in OptionalPageQueryKeys<Q>]?: QueryFieldValue<Q[K]>
+  }
+>
 
 export interface RouteDirOptions {
   /** 页面扫描目录，相对于项目根目录，且必须位于 `srcDir` 内 */
@@ -175,4 +176,9 @@ export interface UniRouteInfo {
   subPackage?: string
 }
 
-export type { PageMetaDatum, PagesConfig, SubPackage, UserPageMeta } from '@uni-helper/uni-pages-types'
+export type {
+  PageMetaDatum,
+  PagesConfig,
+  SubPackage,
+  UserPageMeta,
+} from '@uni-helper/uni-pages-types'

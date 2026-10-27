@@ -36,12 +36,14 @@ export function checkPageDefinitionFields() {
     needLogin: true,
     style: { navigationBarTitleText: 'Home' },
     tabBar: { text: 'Home' },
-    ifdef: ['WEB', 'mp_weixin'],
+    ifdef: ['WEB', 'MP-WEIXIN'],
     ifndef: ['MP-WEIXIN'],
     query: {},
   })
   // @ts-expect-error platform values must match uni-app conditional compilation identifiers
   definePage({ ifdef: ['not-a-platform'] })
+  // @ts-expect-error platform values must use uppercase canonical identifiers
+  definePage({ ifdef: ['mp-weixin'] })
   // @ts-expect-error path is generated from the file system
   definePage({ path: '/pages/other' })
   // @ts-expect-error type is not part of the definePage config

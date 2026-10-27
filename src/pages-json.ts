@@ -1,10 +1,17 @@
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import type { PagesConfig, SubPackage, UserTabBarItem } from '@uni-helper/uni-pages-types'
-import { applyEdits, findNodeAtLocation, modify, parse, parseTree, printParseErrorCode } from 'jsonc-parser'
+import {
+  applyEdits,
+  findNodeAtLocation,
+  modify,
+  parse,
+  parseTree,
+  printParseErrorCode,
+} from 'jsonc-parser'
 import type { ParseError } from 'jsonc-parser'
-import { normalizePath } from './scanner'
-import type { ResolvedUniRouterOptions, RouteManifest } from './scanner'
+import type { ResolvedUniRouterOptions } from './options'
+import type { RouteManifest } from './scanner'
+import { normalizePath, writeFileAtomic } from './utils'
 
 export interface PagesJsonResult {
   config: PagesConfig
@@ -53,16 +60,19 @@ function routeConditions(manifest: RouteManifest): Map<string, PageConditions> {
 function allPagePaths(config: PagesConfig) {
   const paths = (config.pages ?? []).map(page => pagePath(page.path))
   for (const subPackage of config.subPackages ?? []) {
-    for (const page of subPackage.pages) paths.push(pagePath(subPagePath(subPackage.root, page.path)))
+    for (const page of subPackage.pages)
+      paths.push(pagePath(subPagePath(subPackage.root, page.path)))
   }
   return new Set(paths)
 }
 
 function generatedSubPackages(manifest: RouteManifest, existing: SubPackage[], merge: boolean) {
-  const roots = [...new Set([
-    ...(merge ? manifest.managedSubPackageRoots : []),
-    ...manifest.routes.flatMap(route => route.subPackage ? [route.subPackage] : []),
-  ])].sort()
+  const roots = [
+    ...new Set([
+      ...(merge ? manifest.managedSubPackageRoots : []),
+      ...manifest.routes.flatMap(route => (route.subPackage ? [route.subPackage] : [])),
+    ]),
+  ].sort()
   const excluded = new Set(manifest.excludedPaths)
   const managed: SubPackage[] = []
 
@@ -81,7 +91,8 @@ function generatedSubPackages(manifest: RouteManifest, existing: SubPackage[], m
   }
 
   if (!merge) return managed
-  const unmanaged = existing.filter(item => !manifest.managedSubPackageRoots.includes(pagePath(item.root)))
+  const managedRoots = new Set(roots)
+  const unmanaged = existing.filter(item => !managedRoots.has(pagePath(item.root)))
   return [...managed, ...unmanaged]
 }
 
@@ -99,9 +110,10 @@ function mergeTabBar(
 
   const generated = routes
     .map((route, order) => ({ route, order }))
-    .sort((a, b) =>
-      (a.route.tabBar.index ?? Number.MAX_SAFE_INTEGER) - (b.route.tabBar.index ?? Number.MAX_SAFE_INTEGER)
-      || a.order - b.order,
+    .sort(
+      (a, b) =>
+        (a.route.tabBar.index ?? Number.MAX_SAFE_INTEGER) -
+          (b.route.tabBar.index ?? Number.MAX_SAFE_INTEGER) || a.order - b.order,
     )
     .map(({ route }) => {
       const item = orderFields({ ...route.tabBar, pagePath: pagePath(route.path) }, 'pagePath')
@@ -127,7 +139,9 @@ function validateRemovedTabs(before: PagesConfig, after: PagesConfig) {
   for (const item of before.tabBar?.list ?? []) {
     const path = pagePath(item.pagePath)
     if (previousPaths.has(path) && !nextPaths.has(path)) {
-      throw new Error(`[uni-router] tabBar references removed page "${item.pagePath}"; update tabBar or exclude the page from scanning`)
+      throw new Error(
+        `[uni-router] tabBar references removed page "${item.pagePath}"; update tabBar or exclude the page from scanning`,
+      )
     }
   }
 }
@@ -164,7 +178,7 @@ export function mergePagesConfig(
 
   const next: PagesConfig = { ...current, pages }
   const subPackages = generatedSubPackages(manifest, current.subPackages ?? [], options.merge)
-  if (subPackages.length || current.subPackages) next.subPackages = subPackages
+  if (subPackages.length) next.subPackages = subPackages
   else delete next.subPackages
   const tabBar = mergeTabBar(current, manifest, pages, options.merge)
   if (tabBar) next.tabBar = tabBar
@@ -233,15 +247,19 @@ function addConditionalComments(
     let closeAt = node.offset + node.length
     while (closeAt < content.length && /[\t ]/.test(content[closeAt])) closeAt++
     if (content[closeAt] === ',') closeAt++
+    const lineBreak = content[closeAt] === '\r' || content[closeAt] === '\n' ? '' : '\n'
     edits.push({
       offset: closeAt,
-      content: `\n${indent}// #endif`.repeat(directives.length),
+      content: `${`\n${indent}// #endif`.repeat(directives.length)}${lineBreak}`,
     })
   }
 
   return edits
     .sort((a, b) => b.offset - a.offset)
-    .reduce((result, edit) => result.slice(0, edit.offset) + edit.content + result.slice(edit.offset), content)
+    .reduce(
+      (result, edit) => result.slice(0, edit.offset) + edit.content + result.slice(edit.offset),
+      content,
+    )
 }
 
 function serializeConfig(
@@ -252,31 +270,30 @@ function serializeConfig(
   conditions: Map<string, PageConditions>,
 ) {
   if (!existed) {
-    return addConditionalComments(`${JSON.stringify(config, null, 2)}\n`, config, conditions, updateTabBar)
+    return addConditionalComments(
+      `${JSON.stringify(config, null, 2)}\n`,
+      config,
+      conditions,
+      updateTabBar,
+    )
   }
   const options = formatting(text)
-  let result = applyEdits(text, modify(text, ['pages'], config.pages, { formattingOptions: options }))
-  if (config.subPackages) {
-    result = applyEdits(result, modify(result, ['subPackages'], config.subPackages, { formattingOptions: options }))
-  }
+  let result = applyEdits(
+    text,
+    modify(text, ['pages'], config.pages, { formattingOptions: options }),
+  )
+  result = applyEdits(
+    result,
+    modify(result, ['subPackages'], config.subPackages, { formattingOptions: options }),
+  )
   if (updateTabBar) {
-    result = applyEdits(result, modify(result, ['tabBar'], config.tabBar, { formattingOptions: options }))
+    result = applyEdits(
+      result,
+      modify(result, ['tabBar'], config.tabBar, { formattingOptions: options }),
+    )
   }
   result = addConditionalComments(result, config, conditions, updateTabBar)
   return result.endsWith('\n') ? result : `${result}\n`
-}
-
-async function writeAtomic(file: string, content: string) {
-  await mkdir(dirname(file), { recursive: true })
-  const temporary = `${file}.${process.pid}.tmp`
-  try {
-    await writeFile(temporary, content, 'utf8')
-    await rename(temporary, file)
-  }
-  catch (error) {
-    await unlink(temporary).catch(() => {})
-    throw error
-  }
 }
 
 export async function updatePagesJson(
@@ -287,15 +304,14 @@ export async function updatePagesJson(
   let existed = true
   try {
     text = await readFile(options.pagesJson, 'utf8')
-  }
-  catch (error) {
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     existed = false
   }
 
   const errors: ParseError[] = []
   const current = text.trim()
-    ? parse(text, errors, { allowTrailingComma: true }) as PagesConfig
+    ? (parse(text, errors, { allowTrailingComma: true }) as PagesConfig)
     : {}
   if (errors.length) {
     const detail = errors.map(error => printParseErrorCode(error.error)).join(', ')
@@ -314,6 +330,6 @@ export async function updatePagesJson(
     routeConditions(manifest),
   )
   const changed = !existed || content !== text
-  if (changed) await writeAtomic(options.pagesJson, content)
+  if (changed) await writeFileAtomic(options.pagesJson, content)
   return { config, content, changed }
 }

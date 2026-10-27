@@ -30,10 +30,7 @@ import { defineConfig } from 'vite'
 import UniRouter from '@blyou/uni-router/vite'
 
 export default defineConfig({
-  plugins: [
-    UniRouter(),
-    uni(),
-  ],
+  plugins: [UniRouter(), uni()],
 })
 ```
 
@@ -61,7 +58,6 @@ src/pages/user/detail.vue  -> /pages/user/detail
 
 ```vue
 <script setup lang="ts">
-
 definePage({
   style: {
     navigationBarTitleText: '用户详情',
@@ -104,7 +100,7 @@ definePage({
 })
 ```
 
-平台值使用 uni-app 条件编译标识，如 `H5`、`WEB`、`MP-WEIXIN`、`APP-PLUS`、`APP-ANDROID`、`QUICKAPP-WEBVIEW` 等，同时接受小写形式和 `_` 分隔写法，生成时统一归一化为大写 `-` 形式。多个 `ifdef` 或 `ifndef` 值使用 `||` 组合；同时配置时按嵌套条件处理。
+平台值统一使用大写 `-` 分隔的 uni-app 条件编译标识，如 `H5`、`WEB`、`MP-WEIXIN`、`APP-PLUS`、`APP-ANDROID`、`QUICKAPP-WEBVIEW` 等。TypeScript 类型只接受大写规范形式；对于未经过类型检查的 JS 配置，生成前仍会归一化为大写。多个 `ifdef` 或 `ifndef` 值使用 `||` 组合；同时配置时按嵌套条件处理。
 
 条件编译只影响 `pages.json` 中页面和 tabBar 的编译结果，RouteMap 仍会包含所有页面声明；在跨平台代码中导航到可能被排除的页面时，需要自行判断当前平台。
 
@@ -122,13 +118,13 @@ definePage({
 
 ### query 规则
 
-| 声明 | TypeScript 类型 | 是否必传 | `onLoad` 解析 |
-| --- | --- | --- | --- |
-| `String` | `string` | 是 | 保持字符串 |
-| `Number` | `number` | 是 | 转为有限数字 |
-| `Boolean` | `boolean` | 是 | 仅接受 `'true'` / `'false'` |
-| `Object` / `QueryType<T>` | `Record<string, unknown>` / `T` | 是 | 默认调用 `JSON.parse` |
-| `{ type: String, required: false }` | `string \| undefined` | 否 | 缺省时省略字段 |
+| 声明                                | TypeScript 类型                 | 是否必传 | `onLoad` 解析               |
+| ----------------------------------- | ------------------------------- | -------- | --------------------------- |
+| `String`                            | `string`                        | 是       | 保持字符串                  |
+| `Number`                            | `number`                        | 是       | 转为有限数字                |
+| `Boolean`                           | `boolean`                       | 是       | 仅接受 `'true'` / `'false'` |
+| `Object` / `QueryType<T>`           | `Record<string, unknown>` / `T` | 是       | 默认调用 `JSON.parse`       |
+| `{ type: String, required: false }` | `string \| undefined`           | 否       | 缺省时省略字段              |
 
 `Number`、`Boolean` 和 `Object` 同样支持可选对象写法。未声明 query 的页面不接受任意参数。
 
@@ -145,7 +141,7 @@ const query = definePage({
   },
 })
 
-query.obj.a  // number
+query.obj.a // number
 ```
 
 内联的 `T` 会同步生成到 RouteMap，typed 导航也能获得相同对象类型。导航时对象通过 `JSON.stringify` 序列化，页面解析时会先处理 uni-app 的 URL 编码，再默认通过 `JSON.parse` 还原；`format` 仍可覆盖默认行为。
@@ -183,6 +179,8 @@ function openDetail() {
 - 对象参数不是可 JSON 序列化的对象。
 - 对非 tabBar 页面调用 `switchTab`，或给 `switchTab` 传 query。
 
+参数名和值在拼接 URL 前会执行 `encodeURIComponent`，页面解析时会先尝试 `decodeURIComponent`，再按声明的类型转换；对象参数使用 `JSON.stringify` 序列化后再编码，避免 `&`、`#`、空格等字符破坏 URL。
+
 `reLaunch` 使用相同的 query 规则。tabBar 页面跳转应使用 `switchTab`，并遵循 uni-app 各端原生导航限制。
 
 ### 页面 props 语法糖
@@ -191,7 +189,6 @@ function openDetail() {
 
 ```vue
 <script setup lang="ts">
-
 const query = definePage({
   style: { navigationBarTitleText: '用户详情' },
   query: {
@@ -207,7 +204,9 @@ const query = definePage({
 </template>
 ```
 
-插件会将该写法转换为 uni-app 页面 `defineProps`，并通过响应式 getter 解析参数。`query.id` 为 `number`，`query.preview` 为 `boolean | undefined`；返回值只读，访问时会执行与 `parseQuery` 相同的类型转换和运行期校验。
+在 Vue 3 `<script setup>` 模式下，uni-app 会将页面参数作为 props 传入。插件会将该写法转换为页面 `defineProps`，并在页面 `setup` 时一次性解析参数，返回冻结的只读对象。`query.id` 为 `number`，`query.preview` 为 `boolean | undefined`；解析只执行一次，返回值不可修改，解析规则与 `parseQuery` 相同。页面参数在该页面实例生命周期内视为不变。
+
+该语法糖只适用于 Vue 3 `<script setup>`；普通 `<script>` 和其他模式仍使用下方的 `onLoad` + `parseQuery` 方式。由于插件会生成 `defineProps`，同一个 `<script setup>` 中已存在 `defineProps` 时不能同时使用返回值写法，需要改为 `onLoad` + `parseQuery` 或自行合并页面 props。
 
 字段可通过 `format` 覆盖默认解析逻辑。函数接收 URL 解码后的字符串，返回值必须与声明的 `type` 一致，并会继续接受运行期校验：
 
@@ -220,7 +219,7 @@ const query = definePage({
 })
 ```
 
-`format` 可以是 `JSON.parse` 等函数引用，也可以是使用页面作用域变量的内联函数。它属于 `definePage` 页面 props 语法糖；独立的 `parseQuery` 仍使用内置解析规则。
+`format` 可以是 `JSON.parse` 等函数引用，也可以是使用页面作用域变量的内联函数。它在页面 `setup` 解析参数时执行一次；独立的 `parseQuery` 仍使用内置解析规则。
 
 返回值语法仅支持 `<script setup>` 中的单个命名变量声明，例如 `const query = definePage(...)`。普通 `<script>`、解构或多个变量声明仍需使用下面的 `onLoad` 方式。
 
@@ -232,8 +231,8 @@ import { parseQuery } from '@blyou/uni-router'
 
 onLoad(query => {
   const params = parseQuery('/pages/user/detail', query ?? {})
-  params.id       // number
-  params.preview  // boolean | undefined
+  params.id // number
+  params.preview // boolean | undefined
 })
 ```
 
@@ -247,15 +246,15 @@ import { routes } from '@blyou/uni-router/auto-routes'
 
 `definePage` 严格限制为以下七个字段：
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `homepage` | `boolean` | 是否设为 uni-app 启动首页，只控制 `pages` 顺序。 |
-| `ifdef` | `ConditionalPlatform[]` | 仅在指定平台参与编译，写入 `pages.json` 条件编译注释。 |
-| `ifndef` | `ConditionalPlatform[]` | 在指定平台不参与编译，写入 `pages.json` 条件编译注释。 |
-| `needLogin` | `boolean` | 页面是否需要登录。 |
-| `style` | `GlobalStyle` | 页面窗口配置，写入 `pages.json`。 |
-| `tabBar` | `UserTabBarItem` | 页面在底部 tabBar 中的配置，写入根 `tabBar.list`。 |
-| `query` | query schema | 页面参数声明。 |
+| 字段        | 类型                    | 说明                                                   |
+| ----------- | ----------------------- | ------------------------------------------------------ |
+| `homepage`  | `boolean`               | 是否设为 uni-app 启动首页，只控制 `pages` 顺序。       |
+| `ifdef`     | `ConditionalPlatform[]` | 仅在指定平台参与编译，写入 `pages.json` 条件编译注释。 |
+| `ifndef`    | `ConditionalPlatform[]` | 在指定平台不参与编译，写入 `pages.json` 条件编译注释。 |
+| `needLogin` | `boolean`               | 页面是否需要登录。                                     |
+| `style`     | `GlobalStyle`           | 页面窗口配置，写入 `pages.json`。                      |
+| `tabBar`    | `UserTabBarItem`        | 页面在底部 tabBar 中的配置，写入根 `tabBar.list`。     |
+| `query`     | query schema            | 页面参数声明。                                         |
 
 `path` 由文件系统生成，`type` 等其他 `UserPageMeta` 字段不再接受。
 
@@ -279,19 +278,19 @@ UniRouter({
 })
 ```
 
-| 选项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `compilerSfc` | `string` | `'@vue/compiler-sfc'` | 从项目根目录解析的 SFC 编译器模块名或路径，优先使用宿主环境版本。 |
-| `srcDir` | `string` | `'src'` | uni-app 源码目录，页面运行路径以它为基准。 |
-| `dirs` | `Array<string \| RouteDirOptions>` | `['<srcDir>/pages']` | 一个或多个页面扫描目录。 |
-| `include` | `string[]` | `['**/*.vue']` | 全局 include，可被目录配置覆盖。 |
-| `exclude` | `string[]` | `[]` | 全局 exclude，可被目录配置覆盖。 |
-| `pagesJson` | `string` | `'<srcDir>/pages.json'` | `pages.json` 路径。 |
-| `dts` | `string \| false` | `'<root>/uni-router.d.ts'` | RouteMap 声明路径；设为 `false` 可关闭。 |
-| `defaultMeta` | `PageMeta` | `{}` | 页面默认元信息；`style` 与页面配置合并，其他字段由页面覆盖。 |
-| `sort` | `(a, b) => number` | 内置排序 | 自定义页面排序，参数包含 `path`、`file`、`subPackage` 等。 |
-| `merge` | `boolean` | `true` | 是否保留受管范围外的既有页面及既有 tabBar 项。 |
-| `watch` | `boolean` | `true` | 是否在开发/watch 模式同步页面增删改。 |
+| 选项          | 类型                               | 默认值                     | 说明                                                                    |
+| ------------- | ---------------------------------- | -------------------------- | ----------------------------------------------------------------------- |
+| `compilerSfc` | `string`                           | `'@vue/compiler-sfc'`      | 从项目根目录解析的 SFC 编译器模块名或路径，优先使用宿主环境版本。       |
+| `srcDir`      | `string`                           | `'src'`                    | uni-app 源码目录，页面运行路径以它为基准。                              |
+| `dirs`        | `Array<string \| RouteDirOptions>` | `['<srcDir>/pages']`       | 一个或多个页面扫描目录。                                                |
+| `include`     | `string[]`                         | `['**/*.vue']`             | 全局 include，可被目录配置覆盖；可扩展为 `.nvue`、`.uvue` 等 SFC 文件。 |
+| `exclude`     | `string[]`                         | `[]`                       | 全局 exclude，可被目录配置覆盖。                                        |
+| `pagesJson`   | `string`                           | `'<srcDir>/pages.json'`    | `pages.json` 路径。                                                     |
+| `dts`         | `string \| false`                  | `'<root>/uni-router.d.ts'` | RouteMap 声明路径；设为 `false` 可关闭。                                |
+| `defaultMeta` | `PageMeta`                         | `{}`                       | 页面默认元信息；`style` 与页面配置合并，其他字段由页面覆盖。            |
+| `sort`        | `(a, b) => number`                 | 内置排序                   | 自定义页面排序，参数包含 `path`、`file`、`subPackage` 等。              |
+| `merge`       | `boolean`                          | `true`                     | 是否保留受管范围外的既有页面及既有 tabBar 项。                          |
+| `watch`       | `boolean`                          | `true`                     | 是否在开发/watch 模式同步页面增删改。                                   |
 
 未提供 `sort` 时，默认优先 `pages/index/index`、`pages/index`，其余按路径排序；增量模式下会保留仍然有效的原启动页。提供 `sort` 后，以自定义结果为准。`homepage: true` 的页面优先于以上所有规则，始终排在 `pages` 第一位，其余页面再按 `sort` 或默认规则排序。
 
@@ -299,10 +298,7 @@ UniRouter({
 
 ```ts
 UniRouter({
-  dirs: [
-    'src/pages',
-    { src: 'src/subpackages/shop', subPackage: true },
-  ],
+  dirs: ['src/pages', { src: 'src/subpackages/shop', subPackage: true }],
 })
 ```
 
