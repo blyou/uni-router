@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/runtime.ts'],
+  entry: ['src/index.ts', 'src/runtime.ts', 'src/auto-routes.ts'],
   deps: {
     neverBundle: ['@blyou/uni-router/auto-routes'],
   },

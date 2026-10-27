@@ -94,8 +94,8 @@ export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
       options = resolveOptions(userOptions, config.root ?? process.cwd())
       config.optimizeDeps ??= {}
       config.optimizeDeps.exclude ??= []
-      if (!config.optimizeDeps.exclude.includes('@blyou/uni-router')) {
-        config.optimizeDeps.exclude.push('@blyou/uni-router')
+      for (const id of [virtualId, '@blyou/uni-router']) {
+        if (!config.optimizeDeps.exclude.includes(id)) config.optimizeDeps.exclude.push(id)
       }
       await regenerate()
       startupScan = true
