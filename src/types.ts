@@ -169,7 +169,6 @@ export interface UniRouterOptions {
 
 export interface UniRouteInfo {
   path: string
-  file: string
   meta: PageMeta
   query: NormalizedQuerySchema
   tab: boolean

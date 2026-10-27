@@ -50,7 +50,6 @@ export type SwitchTabOptions<P extends TabRoutePath = TabRoutePath> = Omit<
 export type RouteRecord<P extends RoutePath = RoutePath> = P extends RoutePath
   ? {
       path: P
-      file: RouteFile<P>
       meta: RouteMeta<P>
       query: NormalizedQuerySchema
       tab: UniRouteMap[P]['tab']

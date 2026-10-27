@@ -808,6 +808,7 @@ describe('declaration and virtual module generation', () => {
     }
 
     expect(runtimeRoutes(routes, config).map(item => item.tab)).toEqual([true, false])
+    expect(runtimeRoutes(routes, config)[0]).not.toHaveProperty('file')
     const declarations = generateDeclarations(routes, config)
     expect(declarations).toContain('/* eslint-disable */')
     expect(declarations).toContain('/* oxlint-disable */')
@@ -826,6 +827,7 @@ describe('declaration and virtual module generation', () => {
     const virtualModule = generateVirtualModule(routes, config)
     expect(virtualModule).toContain('export const routes')
     expect(virtualModule).toContain('JSON.parse')
+    expect(virtualModule).not.toContain('src/pages/user/detail.vue')
     expect(virtualModule).not.toContain('registerUniRoutes')
   })
 })

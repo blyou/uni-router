@@ -11,7 +11,6 @@ export function runtimeRoutes(routes: RouteFileInfo[], config: PagesConfig): Uni
   const tabs = tabPaths(config)
   return routes.map(route => ({
     path: `/${route.path}`,
-    file: route.file,
     meta: route.meta,
     query: route.query,
     tab: tabs.has(route.path),
@@ -42,7 +41,7 @@ export function generateDeclarations(routes: RouteFileInfo[], config: PagesConfi
       `    ${JSON.stringify(route.path)}: {`,
       `      query: ${queryType(source)}`,
       `      meta: PageMeta`,
-      `      file: ${JSON.stringify(route.file)}`,
+      `      file: ${JSON.stringify(source.file)}`,
       `      tab: ${route.tab}`,
       '    }',
     ].join('\n')
