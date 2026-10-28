@@ -9,7 +9,7 @@ const query = definePage({
 })
 
 function goHome() {
-  switchTab({ url: '/pages/index/index' })
+  switchTab('/pages/index/index')
 }
 </script>
 

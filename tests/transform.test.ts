@@ -24,7 +24,7 @@ const query = definePage({
     obj: { type: Object as QueryType<{ a: number }> },
   },
 })
-navigateTo({ url: '/pages/index/index' })
+navigateTo('/pages/index/index')
 </script>
 <template><text>{{ query.id }}</text></template>`)
 

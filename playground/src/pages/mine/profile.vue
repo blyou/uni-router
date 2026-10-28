@@ -12,7 +12,7 @@ const user = ref(currentUser())
 
 function logout() {
   signOut()
-  redirectTo({ url: '/pages/login/index' })
+  redirectTo('/pages/login/index')
 }
 </script>
 

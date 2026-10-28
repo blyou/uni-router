@@ -18,6 +18,9 @@ type NativeNavigationOptions = {
 
 type NavigationBehavior = 'success' | 'fail'
 
+const navigateUnsafe = navigateTo as (url: string, query?: Record<string, unknown>) => void
+const switchTabUnsafe = switchTab as (url: string) => void
+
 function mockUni(behavior: NavigationBehavior = 'success') {
   const invoke = (options: NativeNavigationOptions) => {
     const result = { errMsg: `mock:${behavior}` }
@@ -57,10 +60,10 @@ describe('navigation interceptors', () => {
         expect(to.querySchema).toHaveProperty('id')
         expect(from?.tab).toBe(true)
       },
-      navigateTo(to) {
+      beforeNavigateTo(to) {
         events.push(`navigateTo:${to.url}`)
       },
-      redirectTo() {
+      beforeRedirectTo() {
         events.push('redirectTo')
       },
       afterEach(to, from, result) {
@@ -69,7 +72,7 @@ describe('navigation interceptors', () => {
     })
     const success = vi.fn<(result: unknown) => void>()
 
-    navigateTo({ url: '/pages/user/detail', query: { id: 42 }, success })
+    navigateTo('/pages/user/detail', { id: 42 }, { success })
 
     expect(uni.navigateTo).toHaveBeenCalledTimes(1)
     expect(uni.navigateTo.mock.calls[0][0]).toMatchObject({
@@ -91,14 +94,14 @@ describe('navigation interceptors', () => {
     const redirectHook = vi.fn<NavigationGuard>()
     const switchTabHook = vi.fn<NavigationGuard>()
     interceptor({
-      navigateTo: navigateHook,
-      redirectTo: redirectHook,
-      switchTab: switchTabHook,
+      beforeNavigateTo: navigateHook,
+      beforeRedirectTo: redirectHook,
+      beforeSwitchTab: switchTabHook,
     })
 
-    navigateTo({ url: '/pages/login/index' })
-    redirectTo({ url: '/pages/login/index' })
-    switchTab({ url: '/pages/index/index' })
+    navigateTo('/pages/login/index')
+    redirectTo('/pages/login/index')
+    switchTab('/pages/index/index')
 
     expect(navigateHook).toHaveBeenCalledTimes(1)
     expect(redirectHook).toHaveBeenCalledTimes(1)
@@ -115,7 +118,7 @@ describe('navigation interceptors', () => {
     const success = vi.fn<(result: unknown) => void>()
     const fail = vi.fn<(result: unknown) => void>()
 
-    navigateTo({ url: '/pages/user/detail', query: { id: 1 }, success, fail })
+    navigateTo('/pages/user/detail', { id: 1 }, { success, fail })
 
     expect(uni.navigateTo).not.toHaveBeenCalled()
     expect(success).not.toHaveBeenCalled()
@@ -138,13 +141,13 @@ describe('navigation interceptors', () => {
       afterEach: after,
     })
 
-    navigateTo({ url: '/pages/login/index' })
+    navigateTo('/pages/login/index')
 
     expect(uni.navigateTo).toHaveBeenCalledTimes(1)
     expect(before).not.toHaveBeenCalled()
     expect(after).not.toHaveBeenCalled()
 
-    navigateTo({ url: '/pages/user/detail', query: { id: 1 } })
+    navigateTo('/pages/user/detail', { id: 1 })
 
     expect(before).toHaveBeenCalledTimes(1)
     expect(after).toHaveBeenCalledTimes(1)
@@ -162,7 +165,7 @@ describe('navigation interceptors', () => {
       },
     })
 
-    navigateTo({ url: '/pages/user/detail', query: { id: 1 } })
+    navigateTo('/pages/user/detail', { id: 1 })
 
     expect(uni.navigateTo).not.toHaveBeenCalled()
     expect(uni.redirectTo).toHaveBeenCalledTimes(1)
@@ -181,11 +184,48 @@ describe('navigation interceptors', () => {
       },
     })
 
-    redirectTo({ url: '/pages/login/index' })
+    redirectTo('/pages/login/index')
 
     expect(uni.redirectTo).not.toHaveBeenCalled()
     expect(uni.switchTab).toHaveBeenCalledTimes(1)
     expect(uni.switchTab.mock.calls[0][0]).toMatchObject({ url: '/pages/index/index' })
+  })
+
+  test('accepts navigation API results as guard redirects', () => {
+    const uni = mockUni()
+    interceptor({
+      beforeEach(to) {
+        if (to.path === '/pages/login/index') {
+          return navigateTo('/pages/user/detail', { id: 1 })
+        }
+      },
+    })
+
+    const info = navigateTo('/pages/login/index')
+
+    expect(info).toMatchObject({
+      method: 'navigateTo',
+      path: '/pages/login/index',
+      url: '/pages/login/index',
+    })
+    expect(uni.navigateTo).toHaveBeenCalledTimes(1)
+    expect(uni.navigateTo.mock.calls[0][0]).toMatchObject({ url: '/pages/user/detail?id=1' })
+  })
+
+  test('accepts navigation API results from notFound', () => {
+    const uni = mockUni()
+    interceptor({
+      notFound() {
+        return navigateTo('/pages/user/detail', { id: 404 })
+      },
+    })
+
+    navigateUnsafe('/pages/missing', { path: '/pages/unknown' })
+
+    expect(uni.navigateTo).toHaveBeenCalledTimes(1)
+    expect(uni.navigateTo.mock.calls[0][0]).toMatchObject({
+      url: '/pages/user/detail?id=404',
+    })
   })
 
   test('handles unregistered paths with notFound and preserves the default error', () => {
@@ -200,21 +240,36 @@ describe('navigation interceptors', () => {
       },
     })
 
-    navigateTo({ url: '/pages/missing' } as never)
+    navigateUnsafe('/pages/missing')
 
     expect(uni.navigateTo).not.toHaveBeenCalled()
     expect(uni.redirectTo).toHaveBeenCalledTimes(1)
     expect(uni.redirectTo.mock.calls[0][0]).toMatchObject({ url: '/pages/login/index' })
 
     clearInterceptors()
-    expect(() => navigateTo({ url: '/pages/missing' } as never)).toThrow('Route is not registered')
+    expect(() => navigateUnsafe('/pages/missing')).toThrow('Route is not registered')
+  })
+
+  test('passes query values to notFound for unregistered paths', () => {
+    const uni = mockUni()
+    const notFound = vi.fn<NavigationGuard>(to => {
+      expect(to.url).toBe('/pages/missing?test=1&obj=%7B%22a%22%3A1%7D')
+      expect(to.query).toEqual({ test: '1', obj: '{"a":1}' })
+      return false
+    })
+    interceptor({ notFound })
+
+    navigateUnsafe('/pages/missing', { test: 1, obj: { a: 1 } })
+
+    expect(notFound).toHaveBeenCalledTimes(1)
+    expect(uni.navigateTo).not.toHaveBeenCalled()
   })
 
   test('cancels unregistered navigation when notFound returns false', () => {
     const uni = mockUni()
     interceptor({ notFound: () => false })
 
-    navigateTo({ url: '/pages/missing' } as never)
+    navigateUnsafe('/pages/missing')
 
     expect(uni.navigateTo).not.toHaveBeenCalled()
     expect(uni.redirectTo).not.toHaveBeenCalled()
@@ -227,18 +282,18 @@ describe('navigation interceptors', () => {
     const second = vi.fn<NavigationGuard>()
     interceptor({ beforeEach: second })
 
-    navigateTo({ url: '/pages/login/index' })
+    navigateTo('/pages/login/index')
     expect(first).toHaveBeenCalledTimes(1)
     expect(second).toHaveBeenCalledTimes(1)
 
     removeFirst()
     removeFirst()
-    navigateTo({ url: '/pages/login/index' })
+    navigateTo('/pages/login/index')
     expect(first).toHaveBeenCalledTimes(1)
     expect(second).toHaveBeenCalledTimes(2)
 
     clearInterceptors()
-    navigateTo({ url: '/pages/login/index' })
+    navigateTo('/pages/login/index')
     expect(first).toHaveBeenCalledTimes(1)
     expect(second).toHaveBeenCalledTimes(2)
     expect(uni.navigateTo).toHaveBeenCalledTimes(3)
@@ -254,7 +309,7 @@ describe('navigation interceptors', () => {
       },
     })
 
-    navigateTo({ url: '/pages/login/index', fail })
+    navigateTo('/pages/login/index', undefined, { fail })
 
     expect(uni.navigateTo).toHaveBeenCalledTimes(1)
     expect(fail).toHaveBeenCalledWith({ errMsg: 'mock:fail' })
@@ -266,10 +321,8 @@ describe('navigation interceptors', () => {
     const guard = vi.fn<NavigationGuard>()
     interceptor({ beforeEach: guard })
 
-    expect(() => navigateTo({ url: '/pages/user/detail' } as never)).toThrow(
-      'Missing required query',
-    )
-    expect(() => switchTab({ url: '/pages/user/detail' } as never)).toThrow('not a tabBar page')
+    expect(() => navigateUnsafe('/pages/user/detail')).toThrow('Missing required query')
+    expect(() => switchTabUnsafe('/pages/user/detail')).toThrow('not a tabBar page')
     expect(guard).not.toHaveBeenCalled()
     expect(uni.navigateTo).not.toHaveBeenCalled()
     expect(uni.switchTab).not.toHaveBeenCalled()
@@ -283,7 +336,7 @@ describe('navigation interceptors', () => {
       },
     })
 
-    expect(() => navigateTo({ url: '/pages/login/index' })).toThrow(
+    expect(() => navigateTo('/pages/login/index')).toThrow(
       'Navigation was redirected too many times',
     )
     expect(uni.navigateTo).not.toHaveBeenCalled()
@@ -296,7 +349,7 @@ describe('navigation interceptors', () => {
       beforeEach: (() => Promise.resolve(true)) as never,
     })
 
-    expect(() => navigateTo({ url: '/pages/login/index' })).toThrow(
+    expect(() => navigateTo('/pages/login/index')).toThrow(
       'Async navigation guards are not supported',
     )
     expect(uni.navigateTo).not.toHaveBeenCalled()
@@ -310,7 +363,7 @@ describe('navigation interceptors', () => {
       },
     })
 
-    expect(() => navigateTo({ url: '/pages/login/index' })).toThrow('guard failed')
+    expect(() => navigateTo('/pages/login/index')).toThrow('guard failed')
     expect(uni.navigateTo).not.toHaveBeenCalled()
   })
 })

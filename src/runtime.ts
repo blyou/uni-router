@@ -3,6 +3,7 @@
 import { routes } from '@blyou/uni-router/auto-routes'
 import {
   hasAfterHooks,
+  isCapturingNavigation,
   normalizeRoutePath,
   runAfterHooks,
   runBeforeGuards,
@@ -18,6 +19,7 @@ import type {
   PageDefinition,
   PageQuery,
   QuerySchema,
+  RouteQueryValue,
   UniRouteInfo,
 } from './types'
 
@@ -36,26 +38,14 @@ type RequiredQueryKeys<P extends RoutePath> = {
   [K in keyof RouteQuery<P>]-?: Record<never, never> extends Pick<RouteQuery<P>, K> ? never : K
 }[keyof RouteQuery<P>]
 
-export type QueryOptions<P extends RoutePath> = [RequiredQueryKeys<P>] extends [never]
-  ? { query?: RouteQuery<P> }
-  : { query: RouteQuery<P> }
+export type NavigateToOptions = Omit<UniNamespace.NavigateToOptions, 'url'>
+export type RedirectToOptions = Omit<UniNamespace.RedirectToOptions, 'url'>
+export type ReLaunchOptions = Omit<UniNamespace.ReLaunchOptions, 'url'>
+export type SwitchTabOptions = Omit<UniNamespace.SwitchTabOptions, 'url'>
 
-export type NavigateToOptions<P extends RoutePath = RoutePath> = Omit<
-  UniNamespace.NavigateToOptions,
-  'url'
-> & { url: P } & QueryOptions<P>
-export type RedirectToOptions<P extends RoutePath = RoutePath> = Omit<
-  UniNamespace.RedirectToOptions,
-  'url'
-> & { url: P } & QueryOptions<P>
-export type ReLaunchOptions<P extends RoutePath = RoutePath> = Omit<
-  UniNamespace.ReLaunchOptions,
-  'url'
-> & { url: P } & QueryOptions<P>
-export type SwitchTabOptions<P extends TabRoutePath = TabRoutePath> = Omit<
-  UniNamespace.SwitchTabOptions,
-  'url'
-> & { url: P }
+type NavigationArgs<P extends RoutePath, O> = [RequiredQueryKeys<P>] extends [never]
+  ? [query?: RouteQuery<P>, options?: O]
+  : [query: RouteQuery<P>, options?: O]
 
 export type RouteRecord<P extends RoutePath = RoutePath> = P extends RoutePath
   ? {
@@ -66,11 +56,6 @@ export type RouteRecord<P extends RoutePath = RoutePath> = P extends RoutePath
       subPackage?: string
     }
   : never
-
-type RuntimeNavigationOptions = Omit<UniNamespace.NavigateToOptions, 'url'> & {
-  url: string
-  query?: Record<string, unknown>
-}
 
 type NativeNavigationOptions = Record<string, unknown>
 
@@ -198,6 +183,35 @@ function serializeQuery(route: UniRouteInfo, query: Record<string, unknown> = {}
   return pairs.length ? `${route.path}?${pairs.join('&')}` : route.path
 }
 
+function queryValueType(value: unknown): RouteQueryValue | undefined {
+  if (typeof value === 'string') return 'string'
+  if (typeof value === 'number' && Number.isFinite(value)) return 'number'
+  if (typeof value === 'boolean') return 'boolean'
+  if (value !== null && typeof value === 'object') return 'object'
+  return undefined
+}
+
+function appendQuery(location: ParsedUrl, query: Record<string, unknown> | undefined): ParsedUrl {
+  const pairs: string[] = []
+  for (const [name, value] of Object.entries(query ?? {})) {
+    if (value == null) continue
+    if (name === '__proto__')
+      error(location.path, 'Query parameter name "__proto__" is not supported')
+    const type = queryValueType(value)
+    if (!type) {
+      error(
+        location.path,
+        `Query parameter "${name}" must be a string, number, boolean, or JSON serializable object`,
+      )
+    }
+    const serialized = queryValue(location.path, name, type, value)
+    pairs.push(`${encodeURIComponent(name)}=${encodeURIComponent(serialized)}`)
+  }
+  if (!pairs.length) return location
+  const separator = location.url.includes('?') ? '&' : '?'
+  return parseUrl(`${location.url}${separator}${pairs.join('&')}`)
+}
+
 type QueryRoute = Pick<UniRouteInfo, 'path' | 'query'>
 
 function decodeQueryValue(value: string) {
@@ -315,7 +329,7 @@ function redirectNavigation(
   const method = redirect.method ?? 'redirectTo'
   const route = routesByPath.get(parsed.path)
   if (!route) {
-    handleMissingRoute(method, parsed, from, depth)
+    handleMissingRoute(createMissingTarget(method, parsed), from, depth)
     return
   }
   if (method === 'switchTab') {
@@ -327,13 +341,8 @@ function redirectNavigation(
   proceedNavigation(method, createTarget(method, route, parsed.url), {}, from, depth)
 }
 
-function handleMissingRoute(
-  method: NavigationMethod,
-  location: ParsedUrl,
-  from: RouteLocation | null,
-  depth: number,
-) {
-  const target: NavigationTarget = {
+function createMissingTarget(method: NavigationMethod, location: ParsedUrl): NavigationTarget {
+  return {
     method,
     path: location.path,
     url: location.url,
@@ -342,16 +351,23 @@ function handleMissingRoute(
     tab: false,
     querySchema: {},
   }
+}
+
+function handleMissingRoute(
+  target: NavigationTarget,
+  from: RouteLocation | null,
+  depth: number,
+): NavigationTarget {
   const decision = runNotFoundGuards(target, from)
   if (decision.type === 'cancel') {
     notifyCancelled(target, from)
-    return
+    return target
   }
   if (decision.type === 'redirect' && decision.redirect) {
     redirectNavigation(decision.redirect, from, depth + 1)
-    return
+    return target
   }
-  error(location.path, 'Route is not registered')
+  error(target.path, 'Route is not registered')
 }
 
 function proceedNavigation(
@@ -375,42 +391,61 @@ function proceedNavigation(
 
 function navigate(
   method: 'navigateTo' | 'redirectTo' | 'reLaunch',
-  options: RuntimeNavigationOptions,
-) {
-  const { query, ...nativeOptions } = options
+  url: string,
+  query: Record<string, unknown> | undefined,
+  options: NativeNavigationOptions | undefined,
+): NavigationTarget {
   const from = currentLocation()
-  const route = routesByPath.get(options.url)
+  const route = routesByPath.get(url)
   if (!route) {
-    handleMissingRoute(method, parseUrl(options.url), from, 0)
-    return
+    const target = createMissingTarget(method, appendQuery(parseUrl(url), query))
+    if (isCapturingNavigation()) return target
+    return handleMissingRoute(target, from, 0)
   }
   const target = createTarget(method, route, serializeQuery(route, query))
-  proceedNavigation(method, target, nativeOptions as NativeNavigationOptions, from, 0)
+  if (isCapturingNavigation()) return target
+  proceedNavigation(method, target, options ?? {}, from, 0)
+  return target
 }
 
-export function navigateTo<P extends RoutePath>(options: NavigateToOptions<P>): void {
-  navigate('navigateTo', options as RuntimeNavigationOptions)
+export function navigateTo<P extends RoutePath>(
+  url: P,
+  ...args: NavigationArgs<P, NavigateToOptions>
+): NavigationTarget {
+  return navigate('navigateTo', url, args[0], args[1])
 }
 
-export function redirectTo<P extends RoutePath>(options: RedirectToOptions<P>): void {
-  navigate('redirectTo', options as RuntimeNavigationOptions)
+export function redirectTo<P extends RoutePath>(
+  url: P,
+  ...args: NavigationArgs<P, RedirectToOptions>
+): NavigationTarget {
+  return navigate('redirectTo', url, args[0], args[1])
 }
 
-export function reLaunch<P extends RoutePath>(options: ReLaunchOptions<P>): void {
-  navigate('reLaunch', options as RuntimeNavigationOptions)
+export function reLaunch<P extends RoutePath>(
+  url: P,
+  ...args: NavigationArgs<P, ReLaunchOptions>
+): NavigationTarget {
+  return navigate('reLaunch', url, args[0], args[1])
 }
 
-export function switchTab<P extends TabRoutePath>(options: SwitchTabOptions<P>): void {
+export function switchTab<P extends TabRoutePath>(
+  url: P,
+  options?: SwitchTabOptions,
+): NavigationTarget {
   const from = currentLocation()
-  const route = routesByPath.get(options.url)
+  const route = routesByPath.get(url)
   if (!route) {
-    handleMissingRoute('switchTab', parseUrl(options.url), from, 0)
-    return
+    const target = createMissingTarget('switchTab', parseUrl(url))
+    if (isCapturingNavigation()) return target
+    return handleMissingRoute(target, from, 0)
   }
-  if (!route.tab) error(options.url, 'Route is not a tabBar page')
-  if ('query' in options) error(options.url, 'switchTab does not support query parameters')
+  if (!route.tab) error(url, 'Route is not a tabBar page')
+  if (options && 'query' in options) error(url, 'switchTab does not support query parameters')
   const target = createTarget('switchTab', route, route.path)
-  proceedNavigation('switchTab', target, options as unknown as NativeNavigationOptions, from, 0)
+  if (isCapturingNavigation()) return target
+  proceedNavigation('switchTab', target, options ?? {}, from, 0)
+  return target
 }
 
 export function parseQuery<P extends RoutePath>(

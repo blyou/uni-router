@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { redirectTo } from '@blyou/uni-router'
+import { routes } from '@blyou/uni-router/auto-routes'
 import { ref } from 'vue'
 import { signIn } from '../../utils/auth'
 
-definePage({
+const query = definePage({
   style: { navigationBarTitleText: '登录' },
+  query: {
+    // 未登录被拦截时的回跳路径
+    to: { type: String, required: false },
+  },
 })
 
 const account = ref('')
@@ -22,7 +27,8 @@ function submit() {
   signIn(account.value)
   uni.showToast({ title: '登录成功', icon: 'success', duration: 800 })
   setTimeout(() => {
-    redirectTo({ url: '/pages/mine/profile' })
+    const target = routes.find((route): boolean => route.path === query.to)?.path
+    redirectTo(target ?? '/pages/mine/profile')
   }, 800)
 }
 </script>

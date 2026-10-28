@@ -76,7 +76,7 @@ export type PageDefinition<Q extends QuerySchema = Record<never, never>> = Pick<
   /** 在指定平台不参与编译，值使用大写 uni-app 条件编译平台标识 */
   ifndef?: ConditionalPlatform[]
   /** 页面参数 schema；导航时据此校验，页面中据此解析 */
-  query?: Q
+  query?: Q & QuerySchema
 }
 
 type ConstructorValue<C extends QueryConstructor> = C extends { readonly __queryType: infer T }

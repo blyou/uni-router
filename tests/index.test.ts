@@ -86,20 +86,26 @@ function manifest(routes: RouteFileInfo[]): RouteManifest {
 }
 
 function typeAssertions() {
-  navigateTo({ url: '/pages/user/detail', query: { id: 1, preview: true } })
-  redirectTo({ url: '/pages/user/detail', query: { id: 1 } })
-  switchTab({ url: '/pages/index/index' })
+  navigateTo('/pages/user/detail', { id: 1, preview: true })
+  redirectTo('/pages/user/detail', { id: 1 })
+  switchTab('/pages/index/index')
+  navigateTo('/pages/index/index', undefined, { animationType: 'fade-in' })
 
   // @ts-expect-error required query is missing
-  navigateTo({ url: '/pages/user/detail' })
+  navigateTo('/pages/user/detail')
   // @ts-expect-error query values must use their declared types
-  navigateTo({ url: '/pages/user/detail', query: { id: '1' } })
+  navigateTo('/pages/user/detail', { id: '1' })
   // @ts-expect-error unknown paths are rejected
-  reLaunch({ url: '/pages/missing' })
+  reLaunch('/pages/missing')
   // @ts-expect-error only tabBar pages can use switchTab
-  switchTab({ url: '/pages/user/detail' })
+  switchTab('/pages/user/detail')
   // @ts-expect-error routes without a schema reject arbitrary query values
-  reLaunch({ url: '/pages/index/index', query: { arbitrary: 'value' } })
+  reLaunch('/pages/index/index', { arbitrary: 'value' })
+
+  definePage({
+    // @ts-expect-error unknown query field options are rejected
+    query: { id: { type: Number, requireds: true } },
+  })
 }
 
 afterEach(async () => {
@@ -849,12 +855,35 @@ describe('runtime navigation and query parsing', () => {
 
   test('serializes typed query values and parses onLoad values', () => {
     const uni = mockUni()
-    navigateTo({ url: '/pages/user/detail', query: { id: 42, preview: false } })
+    navigateTo('/pages/user/detail', { id: 42, preview: false })
     expect(uni.navigateTo).toHaveBeenCalledWith({ url: '/pages/user/detail?id=42&preview=false' })
     expect(parseQuery('/pages/user/detail', { id: '42', preview: 'false' })).toEqual({
       id: 42,
       preview: false,
     })
+  })
+
+  test('returns navigation target info from navigation APIs', () => {
+    const uni = mockUni()
+    const info = navigateTo('/pages/user/detail', { id: 42 })
+    expect(info).toMatchObject({
+      method: 'navigateTo',
+      path: '/pages/user/detail',
+      url: '/pages/user/detail?id=42',
+      query: { id: '42' },
+      meta: {},
+      tab: false,
+    })
+
+    const tab = switchTab('/pages/index/index')
+    expect(tab).toMatchObject({
+      method: 'switchTab',
+      path: '/pages/index/index',
+      url: '/pages/index/index',
+      tab: true,
+    })
+    expect(uni.navigateTo).toHaveBeenCalledTimes(1)
+    expect(uni.switchTab).toHaveBeenCalledTimes(1)
   })
 
   test('parses page props once and returns a read-only cache', () => {
@@ -911,7 +940,7 @@ describe('runtime navigation and query parsing', () => {
 
   test('parses and serializes object query values as JSON', () => {
     const uni = mockUni()
-    navigateTo({ url: '/pages/object', query: { obj: { a: 1 } } })
+    navigateTo('/pages/object', { obj: { a: 1 } })
     expect(uni.navigateTo).toHaveBeenCalledWith({ url: '/pages/object?obj=%7B%22a%22%3A1%7D' })
     const query = usePageQuery<{ obj: QueryType<{ a: number }> }>(
       { obj: '{"a":1}' },
@@ -928,7 +957,7 @@ describe('runtime navigation and query parsing', () => {
   test('URL-encodes query names and values', () => {
     const uni = mockUni()
     const obj = { text: 'a&b #c?d=e', nested: { value: 1 } }
-    navigateTo({ url: '/pages/object', query: { obj } })
+    navigateTo('/pages/object', { obj })
     expect(uni.navigateTo).toHaveBeenCalledWith({
       url: `/pages/object?obj=${encodeURIComponent(JSON.stringify(obj))}`,
     })
@@ -941,7 +970,7 @@ describe('runtime navigation and query parsing', () => {
 
     const circular: Record<string, unknown> = {}
     circular.self = circular
-    expect(() => navigateTo({ url: '/pages/object', query: { obj: circular } })).toThrow(
+    expect(() => navigateTo('/pages/object', { obj: circular })).toThrow(
       'Query parameter "obj" must be JSON serializable',
     )
   })
@@ -980,15 +1009,15 @@ describe('runtime navigation and query parsing', () => {
   })
 
   test('validates missing, unknown, and invalid query values', () => {
-    expect(() => navigateTo({ url: '/pages/user/detail' } as never)).toThrow(
+    expect(() => (navigateTo as (url: string) => void)('/pages/user/detail')).toThrow(
       'Missing required query',
     )
-    expect(() =>
-      navigateTo({ url: '/pages/user/detail', query: { id: Number.POSITIVE_INFINITY } }),
-    ).toThrow('must be number')
-    expect(() =>
-      navigateTo({ url: '/pages/user/detail', query: { id: 1, extra: 'x' } } as never),
-    ).toThrow('Unknown query parameter')
+    expect(() => navigateTo('/pages/user/detail', { id: Number.POSITIVE_INFINITY })).toThrow(
+      'must be number',
+    )
+    expect(() => navigateTo('/pages/user/detail', { id: 1, extra: 'x' } as never)).toThrow(
+      'Unknown query parameter',
+    )
     expect(() => parseQuery('/pages/user/detail', { id: 'not-a-number' })).toThrow('finite number')
     expect(() => parseQuery('/pages/user/detail', { id: '1', preview: 'yes' })).toThrow(
       'true or false',
@@ -997,10 +1026,10 @@ describe('runtime navigation and query parsing', () => {
 
   test('restricts switchTab to registered tab pages without query', () => {
     const uni = mockUni()
-    switchTab({ url: '/pages/index/index' })
+    switchTab('/pages/index/index')
     expect(uni.switchTab).toHaveBeenCalledWith({ url: '/pages/index/index' })
-    expect(() => switchTab({ url: '/pages/user/detail' } as never)).toThrow('not a tabBar page')
-    expect(() => switchTab({ url: '/pages/index/index', query: {} } as never)).toThrow(
+    expect(() => switchTab('/pages/user/detail' as never)).toThrow('not a tabBar page')
+    expect(() => switchTab('/pages/index/index', { query: {} } as never)).toThrow(
       'does not support query',
     )
   })

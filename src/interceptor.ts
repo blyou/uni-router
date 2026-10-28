@@ -38,8 +38,8 @@ export interface NavigationResult {
   data?: unknown
 }
 
-/** 返回 `false` 取消导航，返回 URL 或重定向对象则跳转到新目标 */
-export type NavigationGuardResult = boolean | void | string | NavigationRedirect
+/** 返回 `false` 取消导航；返回 URL、重定向对象或导航 API 结果则跳转到新目标 */
+export type NavigationGuardResult = boolean | void | string | NavigationRedirect | NavigationTarget
 export type NavigationGuard = (
   to: NavigationTarget,
   from: RouteLocation | null,
@@ -65,13 +65,13 @@ export interface InterceptorOptions {
   /** 导航结束或被取消时调用 */
   afterEach?: AfterEachHook
   /** 仅 `navigateTo` 执行前调用 */
-  navigateTo?: NavigationGuard
+  beforeNavigateTo?: NavigationGuard
   /** 仅 `redirectTo` 执行前调用 */
-  redirectTo?: NavigationGuard
+  beforeRedirectTo?: NavigationGuard
   /** 仅 `reLaunch` 执行前调用 */
-  reLaunch?: NavigationGuard
+  beforeReLaunch?: NavigationGuard
   /** 仅 `switchTab` 执行前调用 */
-  switchTab?: NavigationGuard
+  beforeSwitchTab?: NavigationGuard
   /** 命中未注册路径时调用；返回 `false` 取消导航 */
   notFound?: NavigationGuard
 }
@@ -87,24 +87,42 @@ interface InterceptorRecord {
   whitelist: readonly WhitelistRule[]
   beforeEach?: NavigationGuard
   afterEach?: AfterEachHook
-  navigateTo?: NavigationGuard
-  redirectTo?: NavigationGuard
-  reLaunch?: NavigationGuard
-  switchTab?: NavigationGuard
+  beforeNavigateTo?: NavigationGuard
+  beforeRedirectTo?: NavigationGuard
+  beforeReLaunch?: NavigationGuard
+  beforeSwitchTab?: NavigationGuard
   notFound?: NavigationGuard
 }
 
 const interceptors = new Set<InterceptorRecord>()
 
+let capturingNavigation = false
+
+/**
+ * 是否正在执行拦截器钩子
+ *
+ * 钩子内调用导航 API 时只返回目标信息，不立即跳转，便于钩子直接返回该信息触发重定向
+ */
+export function isCapturingNavigation(): boolean {
+  return capturingNavigation
+}
+
 const hookNames = [
   'beforeEach',
   'afterEach',
-  'navigateTo',
-  'redirectTo',
-  'reLaunch',
-  'switchTab',
+  'beforeNavigateTo',
+  'beforeRedirectTo',
+  'beforeReLaunch',
+  'beforeSwitchTab',
   'notFound',
 ] as const
+
+const methodHooks = {
+  navigateTo: 'beforeNavigateTo',
+  redirectTo: 'beforeRedirectTo',
+  reLaunch: 'beforeReLaunch',
+  switchTab: 'beforeSwitchTab',
+} as const satisfies Record<NavigationMethod, keyof InterceptorRecord>
 
 function guardError(location: RouteLocation, message: string): never {
   throw new Error(`[uni-router] ${location.path}: ${message}`)
@@ -184,7 +202,14 @@ function runGuard(
   from: RouteLocation | null,
 ): NavigationGuardDecision | undefined {
   if (!guard) return undefined
-  const value: unknown = guard(to, from)
+  let value: unknown
+  const previous = capturingNavigation
+  capturingNavigation = true
+  try {
+    value = guard(to, from)
+  } finally {
+    capturingNavigation = previous
+  }
   if (value === false) return { type: 'cancel' }
   if (typeof value === 'string') return redirectResult(value, to)
   if (value !== null && typeof value === 'object') {
@@ -217,10 +242,10 @@ export function interceptor(options: InterceptorOptions): RemoveInterceptor {
     whitelist: normalizeWhitelist(options.whitelist),
     beforeEach: options.beforeEach,
     afterEach: options.afterEach,
-    navigateTo: options.navigateTo,
-    redirectTo: options.redirectTo,
-    reLaunch: options.reLaunch,
-    switchTab: options.switchTab,
+    beforeNavigateTo: options.beforeNavigateTo,
+    beforeRedirectTo: options.beforeRedirectTo,
+    beforeReLaunch: options.beforeReLaunch,
+    beforeSwitchTab: options.beforeSwitchTab,
     notFound: options.notFound,
   }
   interceptors.add(record)
@@ -250,7 +275,7 @@ export function runBeforeGuards(
   }
   for (const record of records) {
     if (matchesWhitelist(record.whitelist, to)) continue
-    const decision = runGuard(record[to.method], to, from)
+    const decision = runGuard(record[methodHooks[to.method]], to, from)
     if (decision) return decision
   }
   return { type: 'allow' }

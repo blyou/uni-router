@@ -22,11 +22,11 @@ onShow(() => {
 })
 
 function openProfile() {
-  navigateTo({ url: '/pages/mine/profile' })
+  navigateTo('/pages/mine/profile')
 }
 
 function openLogin() {
-  navigateTo({ url: '/pages/login/index' })
+  navigateTo('/pages/login/index')
 }
 </script>
 

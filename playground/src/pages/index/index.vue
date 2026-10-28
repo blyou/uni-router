@@ -18,22 +18,31 @@ definePage({
     <button
       class="detail-button"
       @click="
-        navigateTo({
-          url: '/pages/user/detail',
-          query: {
-            id: 42,
-            preview: true,
-            obj: { a: 1, b: 'demo', c: true },
-          },
+        navigateTo('/pages/user/detail', {
+          id: 42,
+          preview: true,
+          obj: { a: 1, b: 'demo', c: true },
         })
       "
     >
       查看用户详情
     </button>
+    <button
+      class="detail-button"
+      @click="
+        navigateTo(
+          // @ts-expect-error
+          '/pages/unknown',
+          { test: '测试' },
+        )
+      "
+    >
+      跳转到未注册页面
+    </button>
   </view>
 </template>
 
-<style>
+<style scoped>
 .content {
   display: flex;
   flex-direction: column;

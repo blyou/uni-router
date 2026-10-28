@@ -10,21 +10,18 @@ export const manifestPaths = routes.map(route => route.path) satisfies RoutePath
 export const invalidPath: RoutePath = '/pages/not-registered'
 
 export function checkRouteTypes() {
-  navigateTo({
-    url: '/pages/user/detail',
-    query: {
-      id: 42,
-      preview: true,
-      obj: { a: 1, b: 'demo', c: true },
-    },
+  navigateTo('/pages/user/detail', {
+    id: 42,
+    preview: true,
+    obj: { a: 1, b: 'demo', c: true },
   })
 
   // @ts-expect-error unregistered paths are rejected by the route map
-  navigateTo({ url: '/pages/not-registered' })
+  navigateTo('/pages/not-registered')
   // @ts-expect-error the required id query is missing
-  navigateTo({ url: '/pages/user/detail' })
+  navigateTo('/pages/user/detail')
   // @ts-expect-error id must be a number
-  navigateTo({ url: '/pages/user/detail', query: { id: '42' } })
+  navigateTo('/pages/user/detail', { id: '42' })
 
   const query = parseQuery('/pages/user/detail', { id: '42' })
   return query.id satisfies number

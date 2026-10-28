@@ -25,7 +25,9 @@ declare module '@blyou/uni-router' {
       tab: false
     }
     "/pages/login/index": {
-      query: Record<string, never>
+      query: {
+        "to"?: string
+      }
       meta: PageMeta
       tab: false
     }

@@ -164,13 +164,25 @@ query.obj.a // number
 import { navigateTo } from '@blyou/uni-router'
 
 function openDetail() {
-  navigateTo({
-    url: '/pages/user/detail',
-    query: { id: 42, preview: true },
-  })
+  navigateTo('/pages/user/detail', { id: 42, preview: true })
+}
+
+function openDetailWithOptions() {
+  navigateTo(
+    '/pages/user/detail',
+    { id: 42 },
+    {
+      animationType: 'fade-in',
+      success(result) {
+        console.log('导航成功', result)
+      },
+    },
+  )
 }
 </script>
 ```
+
+导航函数使用 `(url, query?, options?)` 签名：`query` 根据页面 schema 推导，存在必填参数时必传；`options` 为对应 uni-app 原生导航参数，已移除其中的 `url`。`switchTab` 不支持 query，签名为 `(url, options?)`。
 
 以下用法会在编译期报错；绕过类型后，运行期也会抛出带路径和参数名的错误：
 
@@ -249,7 +261,7 @@ import { routes } from '@blyou/uni-router/auto-routes'
 
 ```ts
 // src/plugins/router.ts
-import { interceptor } from '@blyou/uni-router'
+import { interceptor, navigateTo } from '@blyou/uni-router'
 import { isLoggedIn } from '@/utils/auth'
 
 const removeRouterInterceptor = interceptor({
@@ -258,7 +270,7 @@ const removeRouterInterceptor = interceptor({
   beforeEach(to) {
     // needLogin 来自 definePage({ needLogin: true })
     if (to.meta.needLogin && !isLoggedIn()) {
-      return { url: '/pages/login/index', method: 'redirectTo' }
+      return navigateTo('/pages/login/index', { to: to.path })
     }
   },
   afterEach(to, _from, result) {
@@ -284,11 +296,13 @@ import './plugins/router'
 | 钩子        | 执行时机                                   |
 | ----------- | ------------------------------------------ |
 | `beforeEach` | 所有导航的全局前置钩子，最先执行           |
-| `navigateTo` 等 | 对应导航方式的专用前置钩子，在全局钩子之后执行 |
+| `beforeNavigateTo` 等 | 对应导航方式的专用前置钩子，在全局钩子之后执行 |
 | `afterEach` | 原生导航成功、失败或被取消后执行           |
 | `notFound`  | 目标路径未注册时执行，替代默认的路由错误   |
 
 一次导航依次经过：解析路径与参数 → 未注册路径交给 `notFound` → 执行 `beforeEach` → 执行对应方式的钩子 → 放行、取消或重定向 → 原生导航 → `afterEach`。
+
+方法专用钩子统一使用 `before` 前缀：`beforeNavigateTo`、`beforeRedirectTo`、`beforeReLaunch`、`beforeSwitchTab`。
 
 前置钩子的返回值：
 
@@ -297,12 +311,15 @@ import './plugins/router'
 | `false`                         | 取消导航，不调用原生 API                                     |
 | `true` / `undefined`            | 继续执行后续钩子                                              |
 | `string`                        | 按 URL 重定向，默认使用 `redirectTo`                          |
+| `navigateTo(...)` 等导航 API 返回值 | 按该 API 指定的导航方式重定向                             |
 | `{ url, method? }`              | 按指定方式重定向                                              |
 | `Promise`                       | 不支持，会立即抛错，避免异步守卫导致导航被静默放行            |
 
+钩子内调用导航 API 不会立即跳转，而是返回本次导航的目标信息；直接 `return navigateTo(...)`、`return redirectTo(...)`、`return reLaunch(...)` 或 `return switchTab(...)` 即可重定向。钩子外调用导航 API 会立即执行，并返回同样的目标信息（`NavigationTarget`），可读取 `path`、`url`、`query`、`meta`、`tab` 等数据。
+
 重定向目标会重新经过完整的拦截流程，并受 10 次上限保护，循环重定向会抛错。`notFound` 没有返回值或返回 `true` 时保留默认的 `Route is not registered` 错误。
 
-`to` 提供 `path`、`url`、`query`、`meta`、`tab`、`querySchema`、`subPackage` 和 `method`；`from` 提供相同的位置字段，但可能为 `null`（例如应用启动早期或当前平台无法读取页面栈），部分平台只能读取当前页面路径，`from.query` 可能为空。`query` 是 URL 解码后的字符串参数，对象参数仍是 JSON 字符串；`querySchema` 是页面声明的参数 schema。未注册路径的 `meta` 为 `{}`、`tab` 为 `false`、`querySchema` 为 `{}`。
+`to` 提供 `path`、`url`、`query`、`meta`、`tab`、`querySchema`、`subPackage` 和 `method`；`from` 提供相同的位置字段，但可能为 `null`（例如应用启动早期或当前平台无法读取页面栈），部分平台只能读取当前页面路径，`from.query` 可能为空。`query` 是 URL 解码后的字符串参数，对象参数仍是 JSON 字符串；`querySchema` 是页面声明的参数 schema。未注册路径的 `meta` 为 `{}`、`tab` 为 `false`、`querySchema` 为 `{}`，但传入的 query 仍会序列化到 `to.url` 并可通过 `to.query` 读取。
 
 `afterEach` 的 `result.status` 为 `success`、`fail` 或 `cancelled`。取消导航不会触发原调用的 `success`、`fail` 或 `complete` 回调；重定向会发起新的原生导航，原调用参数和回调不会继承。
 
@@ -357,7 +374,7 @@ interceptor({
   whitelist: ['/pages/login/index'],
   beforeEach(to) {
     if (to.meta.needLogin && !isLoggedIn()) {
-      return { url: '/pages/login/index', method: 'redirectTo' }
+      return navigateTo('/pages/login/index', { to: to.path })
     }
   },
 })
@@ -376,7 +393,7 @@ interceptor({
     if (required && !hasPermission(required)) {
       uni.showToast({ title: '无权限访问', icon: 'none' })
       return false
-      // 或：return { url: '/pages/error/403', method: 'reLaunch' }
+      // 或：return reLaunch('/pages/error/403')
     }
   },
 })
@@ -388,19 +405,20 @@ interceptor({
 interceptor({
   notFound(to) {
     console.warn(`未注册路由：${to.path}`)
-    return { url: '/pages/index/index', method: 'reLaunch' }
+    return navigateTo('/pages/index/index')
   },
 })
 ```
 
-**tabBar 页面**：`switchTab` 目标必须是 tabBar 页面且不能携带 query。重定向到 tabBar 页面时显式指定 `method: 'switchTab'`。
+**tabBar 页面**：`switchTab` 目标必须是 tabBar 页面且不能携带 query。重定向到 tabBar 页面时直接返回 `switchTab(...)`。
 
 ### 边界与跨端说明
 
 - 钩子必须同步返回结果。登录态刷新、权限请求等异步逻辑应先准备好状态，或在页面内自行处理。
 - 只有根包导出的导航函数会经过拦截器；直接调用 `uni.navigateTo`、使用 `<navigator>`、点击原生 tabBar 或返回手势不会被拦截。
+- 钩子内调用导航 API 不会立即跳转，只返回目标信息供钩子返回重定向，因此不要在钩子内只调用不返回，否则本次导航被吞掉；`afterEach` 中调用导航 API 不受此限制，会正常跳转。
 - H5 直接输入 URL、刷新页面，以及 App 启动恢复页面时不一定经过导航函数，关键页面仍应在 `onShow` 中保留兜底校验。
-- 重定向 URL 直接交给原生导航，不会重新校验目标页面的 query schema，因此可以携带登录回跳等额外参数；目标页面仍需在 RouteMap 中注册，否则进入 `notFound`。
+- 重定向会重新校验目标页面的 query schema；目标页面未注册时进入 `notFound`。
 - 拦截逻辑只使用 `Map`、`Set`、`getCurrentPages` 和 `uni` 原生导航，不依赖 DOM、Node、`URL` 或 `URLSearchParams`，可在 H5、App 和各小程序端运行。
 - `afterEach` 钩子内部异常会被捕获并输出，不会阻断用户自己的原生导航回调；前置钩子异常会中断导航并向调用方抛出。
 
