@@ -27,6 +27,11 @@ declare module '../src/runtime' {
       meta: { title: 'Home' }
       tab: true
     }
+    '/pages/login/index': {
+      query: Record<string, never>
+      meta: { title: 'Login' }
+      tab: false
+    }
     '/pages/user/detail': {
       query: { id: number; preview?: boolean; obj?: { a: number; b: string; c: boolean } }
       meta: { title: 'Detail' }
@@ -109,7 +114,7 @@ afterEach(async () => {
 describe('route types', () => {
   test('derives paths and query types from the augmented route map', () => {
     expectTypeOf<RoutePath>().toEqualTypeOf<
-      '/pages/index/index' | '/pages/user/detail' | '/pages/object'
+      '/pages/index/index' | '/pages/login/index' | '/pages/user/detail' | '/pages/object'
     >()
     expectTypeOf<RouteQuery<'/pages/user/detail'>>().toEqualTypeOf<{
       id: number

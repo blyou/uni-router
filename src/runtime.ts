@@ -1,6 +1,17 @@
 /// <reference types="@dcloudio/types" />
 
 import { routes } from '@blyou/uni-router/auto-routes'
+import {
+  hasAfterHooks,
+  normalizeRoutePath,
+  runAfterHooks,
+  runBeforeGuards,
+  runNotFoundGuards,
+  type NavigationMethod,
+  type NavigationRedirect,
+  type NavigationTarget,
+  type RouteLocation,
+} from './interceptor'
 import type {
   NormalizedQueryField,
   NormalizedQuerySchema,
@@ -61,6 +72,16 @@ type RuntimeNavigationOptions = Omit<UniNamespace.NavigateToOptions, 'url'> & {
   query?: Record<string, unknown>
 }
 
+type NativeNavigationOptions = Record<string, unknown>
+
+interface ParsedUrl {
+  path: string
+  url: string
+  query: Record<string, string>
+}
+
+const MAX_REDIRECTS = 10
+
 function error(path: string, message: string): never {
   throw new Error(`[uni-router] ${path}: ${message}`)
 }
@@ -75,6 +96,72 @@ function getRoute(path: string) {
   const route = routesByPath.get(path)
   if (!route) error(path, 'Route is not registered')
   return route
+}
+
+function parseUrl(url: string): ParsedUrl {
+  const hash = url.indexOf('#')
+  const withoutHash = hash >= 0 ? url.slice(0, hash) : url
+  const question = withoutHash.indexOf('?')
+  const rawPath = question >= 0 ? withoutHash.slice(0, question) : withoutHash
+  const rawQuery = question >= 0 ? withoutHash.slice(question + 1) : ''
+  const query: Record<string, string> = {}
+  for (const pair of rawQuery.split('&')) {
+    if (!pair) continue
+    const equals = pair.indexOf('=')
+    const name = decodeQueryValue(equals >= 0 ? pair.slice(0, equals) : pair)
+    if (!name || name === '__proto__') continue
+    query[name] = equals >= 0 ? decodeQueryValue(pair.slice(equals + 1)) : ''
+  }
+  const path = normalizeRoutePath(rawPath)
+  return { path, url: rawQuery ? `${path}?${rawQuery}` : path, query }
+}
+
+function createTarget(
+  method: NavigationMethod,
+  route: UniRouteInfo | undefined,
+  url: string,
+): NavigationTarget {
+  const parsed = parseUrl(url)
+  return {
+    method,
+    path: parsed.path,
+    url: parsed.url,
+    query: parsed.query,
+    meta: route?.meta ?? {},
+    tab: route?.tab ?? false,
+    querySchema: route?.query ?? {},
+    subPackage: route?.subPackage,
+  }
+}
+
+type CurrentPageLike = Page.PageInstance & {
+  $page?: { fullPath?: string; path?: string }
+}
+
+function currentLocation(): RouteLocation | null {
+  if (typeof getCurrentPages !== 'function') return null
+  let pages: ReturnType<typeof getCurrentPages>
+  try {
+    pages = getCurrentPages()
+  } catch {
+    return null
+  }
+  const page = pages[pages.length - 1] as CurrentPageLike | undefined
+  if (!page) return null
+  const raw =
+    typeof page.route === 'string' ? page.route : (page.$page?.fullPath ?? page.$page?.path)
+  if (typeof raw !== 'string' || !raw) return null
+  const parsed = parseUrl(raw)
+  const route = routesByPath.get(parsed.path)
+  return {
+    path: parsed.path,
+    url: parsed.url,
+    query: parsed.query,
+    meta: route?.meta ?? {},
+    tab: route?.tab ?? false,
+    querySchema: route?.query ?? {},
+    subPackage: route?.subPackage,
+  }
 }
 
 function queryValue(path: string, name: string, type: string, value: unknown) {
@@ -171,16 +258,134 @@ function parse(route: QueryRoute, query: Record<string, unknown>) {
   return result
 }
 
+function callback(
+  options: NativeNavigationOptions,
+  name: 'success' | 'fail',
+): ((result: unknown) => void) | undefined {
+  const value = options[name]
+  return typeof value === 'function' ? (value as (result: unknown) => void) : undefined
+}
+
+function notifyCancelled(target: NavigationTarget, from: RouteLocation | null) {
+  runAfterHooks(target, from, { status: 'cancelled' })
+}
+
+function dispatchNavigation(
+  method: NavigationMethod,
+  target: NavigationTarget,
+  from: RouteLocation | null,
+  options: NativeNavigationOptions,
+) {
+  let nativeOptions: NativeNavigationOptions = { ...options, url: target.url }
+  if (hasAfterHooks(target)) {
+    const success = callback(nativeOptions, 'success')
+    const fail = callback(nativeOptions, 'fail')
+    nativeOptions = {
+      ...nativeOptions,
+      success(result: unknown) {
+        runAfterHooks(target, from, { status: 'success', data: result })
+        success?.(result)
+      },
+      fail(result: unknown) {
+        runAfterHooks(target, from, { status: 'fail', data: result })
+        fail?.(result)
+      },
+    }
+  }
+  if (method === 'navigateTo') {
+    uni.navigateTo(nativeOptions as unknown as UniNamespace.NavigateToOptions)
+  } else if (method === 'redirectTo') {
+    uni.redirectTo(nativeOptions as unknown as UniNamespace.RedirectToOptions)
+  } else if (method === 'reLaunch') {
+    uni.reLaunch(nativeOptions as unknown as UniNamespace.ReLaunchOptions)
+  } else {
+    uni.switchTab(nativeOptions as unknown as UniNamespace.SwitchTabOptions)
+  }
+}
+
+function redirectNavigation(
+  redirect: NavigationRedirect,
+  from: RouteLocation | null,
+  depth: number,
+) {
+  const parsed = parseUrl(redirect.url)
+  if (depth > MAX_REDIRECTS) {
+    error(parsed.path, 'Navigation was redirected too many times')
+  }
+  const method = redirect.method ?? 'redirectTo'
+  const route = routesByPath.get(parsed.path)
+  if (!route) {
+    handleMissingRoute(method, parsed, from, depth)
+    return
+  }
+  if (method === 'switchTab') {
+    if (!route.tab) error(parsed.path, 'Route is not a tabBar page')
+    if (Object.keys(parsed.query).length) {
+      error(parsed.path, 'switchTab does not support query parameters')
+    }
+  }
+  proceedNavigation(method, createTarget(method, route, parsed.url), {}, from, depth)
+}
+
+function handleMissingRoute(
+  method: NavigationMethod,
+  location: ParsedUrl,
+  from: RouteLocation | null,
+  depth: number,
+) {
+  const target: NavigationTarget = {
+    method,
+    path: location.path,
+    url: location.url,
+    query: location.query,
+    meta: {},
+    tab: false,
+    querySchema: {},
+  }
+  const decision = runNotFoundGuards(target, from)
+  if (decision.type === 'cancel') {
+    notifyCancelled(target, from)
+    return
+  }
+  if (decision.type === 'redirect' && decision.redirect) {
+    redirectNavigation(decision.redirect, from, depth + 1)
+    return
+  }
+  error(location.path, 'Route is not registered')
+}
+
+function proceedNavigation(
+  method: NavigationMethod,
+  target: NavigationTarget,
+  options: NativeNavigationOptions,
+  from: RouteLocation | null,
+  depth: number,
+) {
+  const decision = runBeforeGuards(target, from)
+  if (decision.type === 'cancel') {
+    notifyCancelled(target, from)
+    return
+  }
+  if (decision.type === 'redirect' && decision.redirect) {
+    redirectNavigation(decision.redirect, from, depth + 1)
+    return
+  }
+  dispatchNavigation(method, target, from, options)
+}
+
 function navigate(
   method: 'navigateTo' | 'redirectTo' | 'reLaunch',
   options: RuntimeNavigationOptions,
 ) {
-  const route = getRoute(options.url)
   const { query, ...nativeOptions } = options
-  const url = serializeQuery(route, query)
-  if (method === 'navigateTo') uni.navigateTo({ ...nativeOptions, url })
-  else if (method === 'redirectTo') uni.redirectTo({ ...nativeOptions, url })
-  else uni.reLaunch({ ...nativeOptions, url })
+  const from = currentLocation()
+  const route = routesByPath.get(options.url)
+  if (!route) {
+    handleMissingRoute(method, parseUrl(options.url), from, 0)
+    return
+  }
+  const target = createTarget(method, route, serializeQuery(route, query))
+  proceedNavigation(method, target, nativeOptions as NativeNavigationOptions, from, 0)
 }
 
 export function navigateTo<P extends RoutePath>(options: NavigateToOptions<P>): void {
@@ -196,10 +401,16 @@ export function reLaunch<P extends RoutePath>(options: ReLaunchOptions<P>): void
 }
 
 export function switchTab<P extends TabRoutePath>(options: SwitchTabOptions<P>): void {
-  const route = getRoute(options.url)
+  const from = currentLocation()
+  const route = routesByPath.get(options.url)
+  if (!route) {
+    handleMissingRoute('switchTab', parseUrl(options.url), from, 0)
+    return
+  }
   if (!route.tab) error(options.url, 'Route is not a tabBar page')
   if ('query' in options) error(options.url, 'switchTab does not support query parameters')
-  uni.switchTab({ ...options, url: route.path })
+  const target = createTarget('switchTab', route, route.path)
+  proceedNavigation('switchTab', target, options as unknown as NativeNavigationOptions, from, 0)
 }
 
 export function parseQuery<P extends RoutePath>(
@@ -246,6 +457,23 @@ export function definePage<Q extends QuerySchema = Record<never, never>>(
   void _options
   return {} as PageQuery<Q>
 }
+
+export { clearInterceptors, interceptor } from './interceptor'
+export type {
+  AfterEachHook,
+  InterceptorOptions,
+  NavigationGuard,
+  NavigationGuardResult,
+  NavigationMethod,
+  NavigationResult,
+  NavigationRedirect,
+  NavigationTarget,
+  RemoveInterceptor,
+  RouteLocation,
+  Whitelist,
+  WhitelistMatcher,
+  WhitelistRule,
+} from './interceptor'
 
 export type {
   ConditionalPlatform,

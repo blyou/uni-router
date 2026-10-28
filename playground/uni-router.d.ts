@@ -17,10 +17,27 @@ declare module '@blyou/uni-router' {
       meta: PageMeta
       tab: true
     }
+    "/pages/404/index": {
+      query: {
+        "path"?: string
+      }
+      meta: PageMeta
+      tab: false
+    }
+    "/pages/login/index": {
+      query: Record<string, never>
+      meta: PageMeta
+      tab: false
+    }
     "/pages/mine/index": {
       query: Record<string, never>
       meta: PageMeta
       tab: true
+    }
+    "/pages/mine/profile": {
+      query: Record<string, never>
+      meta: PageMeta
+      tab: false
     }
     "/pages/user/detail": {
       query: {

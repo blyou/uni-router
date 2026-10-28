@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { onShow } from '@dcloudio/uni-app'
+import { navigateTo } from '@blyou/uni-router'
+import { ref } from 'vue'
+import { currentUser, isLoggedIn } from '../../utils/auth'
+
 definePage({
   style: { navigationBarTitleText: '我的' },
   tabBar: {
@@ -7,6 +12,22 @@ definePage({
     index: 1,
   },
 })
+
+const user = ref(currentUser())
+const loggedIn = ref(false)
+
+onShow(() => {
+  loggedIn.value = isLoggedIn()
+  user.value = currentUser()
+})
+
+function openProfile() {
+  navigateTo({ url: '/pages/mine/profile' })
+}
+
+function openLogin() {
+  navigateTo({ url: '/pages/login/index' })
+}
 </script>
 
 <template>
@@ -14,14 +35,18 @@ definePage({
     <view class="profile">
       <image class="avatar" src="/static/logo.png" />
       <view class="info">
-        <text class="nickname">uni-router 用户</text>
-        <text class="desc">这是「我的」tabBar 页面</text>
+        <text class="nickname">{{ user.nickname }}</text>
+        <text class="desc">{{ loggedIn ? '已登录' : '未登录' }}</text>
       </view>
     </view>
 
     <view class="menu">
-      <view class="menu-item">
-        <text>账号设置</text>
+      <view class="menu-item" @click="openProfile">
+        <text>个人信息</text>
+        <text class="arrow">›</text>
+      </view>
+      <view class="menu-item" @click="openLogin">
+        <text>{{ loggedIn ? '切换账号' : '登录' }}</text>
         <text class="arrow">›</text>
       </view>
       <view class="menu-item">

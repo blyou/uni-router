@@ -9,6 +9,7 @@
 - 通过 `definePage` 声明页面元信息、启动首页与显式 query schema。
 - 生成精确的路径、参数和 tabBar 类型，错误路径与错误参数在编译期报错。
 - 提供 `navigateTo`、`redirectTo`、`reLaunch`、`switchTab` 和 `parseQuery`。
+- 提供可动态添加、移除的全局导航拦截器，支持白名单、重定向和未注册路径兜底。
 - 增量合并 JSONC，保留受管范围外的页面及现有应用配置。
 - 运行期不依赖 Node、DOM、`URL` 或 `URLSearchParams`，可用于 H5、App 和小程序。
 
@@ -236,11 +237,172 @@ onLoad(query => {
 })
 ```
 
-根包直接导出 `navigateTo`、`redirectTo`、`reLaunch`、`switchTab` 和 `parseQuery`。路由清单在构建期生成到 `@blyou/uni-router/auto-routes`，运行时由根包直接引用，无需手动注册。需要读取清单时可单独导入：
+根包直接导出 `navigateTo`、`redirectTo`、`reLaunch`、`switchTab`、`parseQuery` 和 `interceptor`。路由清单在构建期生成到 `@blyou/uni-router/auto-routes`，运行时由根包直接引用，无需手动注册。需要读取清单时可单独导入：
 
 ```ts
 import { routes } from '@blyou/uni-router/auto-routes'
 ```
+
+## 导航拦截器
+
+`interceptor` 是所有拦截规则的统一配置入口。它作用于根包导出的 `navigateTo`、`redirectTo`、`reLaunch` 和 `switchTab`，最终的页面跳转仍由 uni-app 原生 API 完成。
+
+```ts
+// src/plugins/router.ts
+import { interceptor } from '@blyou/uni-router'
+import { isLoggedIn } from '@/utils/auth'
+
+const removeRouterInterceptor = interceptor({
+  // 登录页和公开的 tabBar 页面跳过本拦截器的全部钩子
+  whitelist: ['/pages/login/index', '/pages/index/index'],
+  beforeEach(to) {
+    // needLogin 来自 definePage({ needLogin: true })
+    if (to.meta.needLogin && !isLoggedIn()) {
+      return { url: '/pages/login/index', method: 'redirectTo' }
+    }
+  },
+  afterEach(to, _from, result) {
+    if (result.status === 'fail') {
+      console.warn(`导航到 ${to.path} 失败`, result.data)
+    }
+  },
+})
+
+// 需要时可动态移除当前规则
+// removeRouterInterceptor()
+```
+
+在应用入口引入一次：
+
+```ts
+// src/main.ts
+import './plugins/router'
+```
+
+### 钩子与执行流程
+
+| 钩子        | 执行时机                                   |
+| ----------- | ------------------------------------------ |
+| `beforeEach` | 所有导航的全局前置钩子，最先执行           |
+| `navigateTo` 等 | 对应导航方式的专用前置钩子，在全局钩子之后执行 |
+| `afterEach` | 原生导航成功、失败或被取消后执行           |
+| `notFound`  | 目标路径未注册时执行，替代默认的路由错误   |
+
+一次导航依次经过：解析路径与参数 → 未注册路径交给 `notFound` → 执行 `beforeEach` → 执行对应方式的钩子 → 放行、取消或重定向 → 原生导航 → `afterEach`。
+
+前置钩子的返回值：
+
+| 返回值                          | 行为                                                         |
+| ------------------------------- | ------------------------------------------------------------ |
+| `false`                         | 取消导航，不调用原生 API                                     |
+| `true` / `undefined`            | 继续执行后续钩子                                              |
+| `string`                        | 按 URL 重定向，默认使用 `redirectTo`                          |
+| `{ url, method? }`              | 按指定方式重定向                                              |
+| `Promise`                       | 不支持，会立即抛错，避免异步守卫导致导航被静默放行            |
+
+重定向目标会重新经过完整的拦截流程，并受 10 次上限保护，循环重定向会抛错。`notFound` 没有返回值或返回 `true` 时保留默认的 `Route is not registered` 错误。
+
+`to` 提供 `path`、`url`、`query`、`meta`、`tab`、`querySchema`、`subPackage` 和 `method`；`from` 提供相同的位置字段，但可能为 `null`（例如应用启动早期或当前平台无法读取页面栈），部分平台只能读取当前页面路径，`from.query` 可能为空。`query` 是 URL 解码后的字符串参数，对象参数仍是 JSON 字符串；`querySchema` 是页面声明的参数 schema。未注册路径的 `meta` 为 `{}`、`tab` 为 `false`、`querySchema` 为 `{}`。
+
+`afterEach` 的 `result.status` 为 `success`、`fail` 或 `cancelled`。取消导航不会触发原调用的 `success`、`fail` 或 `complete` 回调；重定向会发起新的原生导航，原调用参数和回调不会继承。
+
+### 白名单
+
+`whitelist` 支持三种规则，命中后跳过当前这次 `interceptor` 注册的全部钩子：
+
+```ts
+interceptor({
+  whitelist: [
+    '/pages/login/index', // 精确路径，忽略首尾斜杠和 query
+    /^\/pages\/public\//, // 正则匹配 to.path
+    to => to.path.endsWith('/preview'), // 自定义判断
+  ],
+  beforeEach(to) {
+    // ...
+  },
+})
+```
+
+白名单按注册项独立生效。多个模块各自注册拦截器时，一个模块的白名单不会关闭其他模块的校验。
+
+### 动态添加与移除
+
+重复调用会按注册顺序叠加规则；返回值是幂等的移除函数：
+
+```ts
+import { clearInterceptors, interceptor } from '@blyou/uni-router'
+
+const removePermission = interceptor({
+  beforeEach(to) {
+    // ...
+  },
+})
+
+// 动态移除，不会残留钩子引用
+removePermission()
+removePermission()
+
+// 移除全部规则，主要用于应用销毁或测试清理
+clearInterceptors()
+```
+
+建议在应用入口注册一次，不要在页面生命周期中反复注册。热更新场景可调用返回值，清理旧模块实例。
+
+### 常见拦截场景
+
+**登录态缺失**：对声明了 `needLogin` 的页面重定向到登录页，并把登录页放入白名单，避免重定向目标被再次拦截。
+
+```ts
+interceptor({
+  whitelist: ['/pages/login/index'],
+  beforeEach(to) {
+    if (to.meta.needLogin && !isLoggedIn()) {
+      return { url: '/pages/login/index', method: 'redirectTo' }
+    }
+  },
+})
+```
+
+**无权限**：可以取消导航并提示，或重定向到统一的 403 页面。
+
+```ts
+const permissions: Record<string, string> = {
+  '/pages/admin/index': 'admin',
+}
+
+interceptor({
+  beforeEach(to) {
+    const required = permissions[to.path]
+    if (required && !hasPermission(required)) {
+      uni.showToast({ title: '无权限访问', icon: 'none' })
+      return false
+      // 或：return { url: '/pages/error/403', method: 'reLaunch' }
+    }
+  },
+})
+```
+
+**未注册路径**：`notFound` 可兜底到首页或登录页；返回 `false` 则静默取消。
+
+```ts
+interceptor({
+  notFound(to) {
+    console.warn(`未注册路由：${to.path}`)
+    return { url: '/pages/index/index', method: 'reLaunch' }
+  },
+})
+```
+
+**tabBar 页面**：`switchTab` 目标必须是 tabBar 页面且不能携带 query。重定向到 tabBar 页面时显式指定 `method: 'switchTab'`。
+
+### 边界与跨端说明
+
+- 钩子必须同步返回结果。登录态刷新、权限请求等异步逻辑应先准备好状态，或在页面内自行处理。
+- 只有根包导出的导航函数会经过拦截器；直接调用 `uni.navigateTo`、使用 `<navigator>`、点击原生 tabBar 或返回手势不会被拦截。
+- H5 直接输入 URL、刷新页面，以及 App 启动恢复页面时不一定经过导航函数，关键页面仍应在 `onShow` 中保留兜底校验。
+- 重定向 URL 直接交给原生导航，不会重新校验目标页面的 query schema，因此可以携带登录回跳等额外参数；目标页面仍需在 RouteMap 中注册，否则进入 `notFound`。
+- 拦截逻辑只使用 `Map`、`Set`、`getCurrentPages` 和 `uni` 原生导航，不依赖 DOM、Node、`URL` 或 `URLSearchParams`，可在 H5、App 和各小程序端运行。
+- `afterEach` 钩子内部异常会被捕获并输出，不会阻断用户自己的原生导航回调；前置钩子异常会中断导航并向调用方抛出。
 
 ## 支持的页面配置
 

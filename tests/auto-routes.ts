@@ -8,6 +8,12 @@ export const routes: readonly UniRouteInfo[] = [
     tab: true,
   },
   {
+    path: '/pages/login/index',
+    meta: {},
+    query: {},
+    tab: false,
+  },
+  {
     path: '/pages/user/detail',
     meta: {},
     query: {

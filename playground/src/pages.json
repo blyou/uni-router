@@ -7,9 +7,28 @@
       }
     },
     {
+      "path": "pages/404/index",
+      "style": {
+        "navigationBarTitleText": "页面不存在"
+      }
+    },
+    {
+      "path": "pages/login/index",
+      "style": {
+        "navigationBarTitleText": "登录"
+      }
+    },
+    {
       "path": "pages/mine/index",
       "style": {
         "navigationBarTitleText": "我的"
+      }
+    },
+    {
+      "path": "pages/mine/profile",
+      "needLogin": true,
+      "style": {
+        "navigationBarTitleText": "个人信息"
       }
     },
     {
