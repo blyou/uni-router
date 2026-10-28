@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { navigateTo } from '@blyou/uni-router'
+import { navigateTo, switchTab } from '@blyou/uni-router'
 
 definePage({
   homepage: true,
@@ -39,6 +39,7 @@ definePage({
     >
       跳转到未注册页面
     </button>
+    <button class="detail-button" @click="switchTab('/pages/mine/index')">switchTab</button>
   </view>
 </template>
 

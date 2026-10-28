@@ -33,6 +33,9 @@ export type RouteMeta<P extends RoutePath> = UniRouteMap[P]['meta']
 export type TabRoutePath = {
   [P in RoutePath]: UniRouteMap[P]['tab'] extends true ? P : never
 }[RoutePath]
+export type NonTabRoutePath = {
+  [P in RoutePath]: UniRouteMap[P]['tab'] extends true ? never : P
+}[RoutePath]
 
 type RequiredQueryKeys<P extends RoutePath> = {
   [K in keyof RouteQuery<P>]-?: Record<never, never> extends Pick<RouteQuery<P>, K> ? never : K
@@ -412,21 +415,21 @@ function navigate(
   return target
 }
 
-export function navigateTo<P extends RoutePath>(
+export function navigateTo<P extends NonTabRoutePath>(
   url: P,
   ...args: NavigationArgs<P, NavigateToOptions>
 ): NavigationTarget {
   return navigate('navigateTo', url, args[0], args[1])
 }
 
-export function redirectTo<P extends RoutePath>(
+export function redirectTo<P extends NonTabRoutePath>(
   url: P,
   ...args: NavigationArgs<P, RedirectToOptions>
 ): NavigationTarget {
   return navigate('redirectTo', url, args[0], args[1])
 }
 
-export function reLaunch<P extends RoutePath>(
+export function reLaunch<P extends NonTabRoutePath>(
   url: P,
   ...args: NavigationArgs<P, ReLaunchOptions>
 ): NavigationTarget {

@@ -182,7 +182,7 @@ function openDetailWithOptions() {
 </script>
 ```
 
-导航函数使用 `(url, query?, options?)` 签名：`query` 根据页面 schema 推导，存在必填参数时必传；`options` 为对应 uni-app 原生导航参数，已移除其中的 `url`。`switchTab` 不支持 query，签名为 `(url, options?)`。
+导航函数使用 `(url, query?, options?)` 签名：`query` 根据页面 schema 推导，存在必填参数时必传；`options` 为对应 uni-app 原生导航参数，已移除其中的 `url`。`switchTab` 不支持 query，签名为 `(url, options?)`。`navigateTo`、`redirectTo`、`reLaunch` 的 `url` 只接受非 tabBar 页面，`switchTab` 的 `url` 只接受 tabBar 页面。
 
 以下用法会在编译期报错；绕过类型后，运行期也会抛出带路径和参数名的错误：
 
@@ -191,6 +191,7 @@ function openDetailWithOptions() {
 - `number`、`boolean` 类型错误，以及 `NaN`、无穷大。
 - 对象参数不是可 JSON 序列化的对象。
 - 对非 tabBar 页面调用 `switchTab`，或给 `switchTab` 传 query。
+- 对 tabBar 页面调用 `navigateTo`、`redirectTo` 或 `reLaunch`（编译期由路由类型拦截）。
 
 参数名和值在拼接 URL 前会执行 `encodeURIComponent`，页面解析时会先尝试 `decodeURIComponent`，再按声明的类型转换；对象参数使用 `JSON.stringify` 序列化后再编码，避免 `&`、`#`、空格等字符破坏 URL。
 
@@ -293,12 +294,12 @@ import './plugins/router'
 
 ### 钩子与执行流程
 
-| 钩子        | 执行时机                                   |
-| ----------- | ------------------------------------------ |
-| `beforeEach` | 所有导航的全局前置钩子，最先执行           |
+| 钩子                  | 执行时机                                       |
+| --------------------- | ---------------------------------------------- |
+| `beforeEach`          | 所有导航的全局前置钩子，最先执行               |
 | `beforeNavigateTo` 等 | 对应导航方式的专用前置钩子，在全局钩子之后执行 |
-| `afterEach` | 原生导航成功、失败或被取消后执行           |
-| `notFound`  | 目标路径未注册时执行，替代默认的路由错误   |
+| `afterEach`           | 原生导航成功、失败或被取消后执行               |
+| `notFound`            | 目标路径未注册时执行，替代默认的路由错误       |
 
 一次导航依次经过：解析路径与参数 → 未注册路径交给 `notFound` → 执行 `beforeEach` → 执行对应方式的钩子 → 放行、取消或重定向 → 原生导航 → `afterEach`。
 
@@ -306,14 +307,14 @@ import './plugins/router'
 
 前置钩子的返回值：
 
-| 返回值                          | 行为                                                         |
-| ------------------------------- | ------------------------------------------------------------ |
-| `false`                         | 取消导航，不调用原生 API                                     |
-| `true` / `undefined`            | 继续执行后续钩子                                              |
-| `string`                        | 按 URL 重定向，默认使用 `redirectTo`                          |
-| `navigateTo(...)` 等导航 API 返回值 | 按该 API 指定的导航方式重定向                             |
-| `{ url, method? }`              | 按指定方式重定向                                              |
-| `Promise`                       | 不支持，会立即抛错，避免异步守卫导致导航被静默放行            |
+| 返回值                              | 行为                                               |
+| ----------------------------------- | -------------------------------------------------- |
+| `false`                             | 取消导航，不调用原生 API                           |
+| `true` / `undefined`                | 继续执行后续钩子                                   |
+| `string`                            | 按 URL 重定向，默认使用 `redirectTo`               |
+| `navigateTo(...)` 等导航 API 返回值 | 按该 API 指定的导航方式重定向                      |
+| `{ url, method? }`                  | 按指定方式重定向                                   |
+| `Promise`                           | 不支持，会立即抛错，避免异步守卫导致导航被静默放行 |
 
 钩子内调用导航 API 不会立即跳转，而是返回本次导航的目标信息；直接 `return navigateTo(...)`、`return redirectTo(...)`、`return reLaunch(...)` 或 `return switchTab(...)` 即可重定向。钩子外调用导航 API 会立即执行，并返回同样的目标信息（`NavigationTarget`），可读取 `path`、`url`、`query`、`meta`、`tab` 等数据。
 
@@ -405,12 +406,12 @@ interceptor({
 interceptor({
   notFound(to) {
     console.warn(`未注册路由：${to.path}`)
-    return navigateTo('/pages/index/index')
+    return switchTab('/pages/index/index')
   },
 })
 ```
 
-**tabBar 页面**：`switchTab` 目标必须是 tabBar 页面且不能携带 query。重定向到 tabBar 页面时直接返回 `switchTab(...)`。
+**tabBar 页面**：`switchTab` 目标必须是 tabBar 页面且不能携带 query；`navigateTo`、`redirectTo`、`reLaunch` 的目标不能是 tabBar 页面。重定向到 tabBar 页面时直接返回 `switchTab(...)`。
 
 ### 边界与跨端说明
 

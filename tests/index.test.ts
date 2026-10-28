@@ -14,7 +14,13 @@ import {
   switchTab,
   usePageQuery,
 } from '../src/runtime'
-import type { QueryType, RoutePath, RouteQuery } from '../src/runtime'
+import type {
+  NonTabRoutePath,
+  QueryType,
+  RoutePath,
+  RouteQuery,
+  TabRoutePath,
+} from '../src/runtime'
 import { analyzePage, createScanCache, resolveOptions, scanPages } from '../src/scanner'
 import { loadSfcParser } from '../src/sfc'
 import type { RouteManifest } from '../src/scanner'
@@ -89,7 +95,7 @@ function typeAssertions() {
   navigateTo('/pages/user/detail', { id: 1, preview: true })
   redirectTo('/pages/user/detail', { id: 1 })
   switchTab('/pages/index/index')
-  navigateTo('/pages/index/index', undefined, { animationType: 'fade-in' })
+  navigateTo('/pages/login/index', undefined, { animationType: 'fade-in' })
 
   // @ts-expect-error required query is missing
   navigateTo('/pages/user/detail')
@@ -99,8 +105,14 @@ function typeAssertions() {
   reLaunch('/pages/missing')
   // @ts-expect-error only tabBar pages can use switchTab
   switchTab('/pages/user/detail')
+  // @ts-expect-error tabBar pages must use switchTab
+  navigateTo('/pages/index/index')
+  // @ts-expect-error tabBar pages must use switchTab
+  redirectTo('/pages/index/index')
+  // @ts-expect-error tabBar pages must use switchTab
+  reLaunch('/pages/index/index')
   // @ts-expect-error routes without a schema reject arbitrary query values
-  reLaunch('/pages/index/index', { arbitrary: 'value' })
+  reLaunch('/pages/login/index', { arbitrary: 'value' })
 
   definePage({
     // @ts-expect-error unknown query field options are rejected
@@ -121,6 +133,10 @@ describe('route types', () => {
   test('derives paths and query types from the augmented route map', () => {
     expectTypeOf<RoutePath>().toEqualTypeOf<
       '/pages/index/index' | '/pages/login/index' | '/pages/user/detail' | '/pages/object'
+    >()
+    expectTypeOf<TabRoutePath>().toEqualTypeOf<'/pages/index/index'>()
+    expectTypeOf<NonTabRoutePath>().toEqualTypeOf<
+      '/pages/login/index' | '/pages/user/detail' | '/pages/object'
     >()
     expectTypeOf<RouteQuery<'/pages/user/detail'>>().toEqualTypeOf<{
       id: number
