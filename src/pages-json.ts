@@ -11,6 +11,7 @@ import {
 import type { ParseError } from 'jsonc-parser'
 import type { ResolvedUniRouterOptions } from './options'
 import type { RouteManifest } from './scanner'
+import type { RouteFileInfo } from './types'
 import { normalizePath, writeFileAtomic } from './utils'
 
 export interface PagesJsonResult {
@@ -19,8 +20,13 @@ export interface PagesJsonResult {
   changed: boolean
 }
 
+const leadingSlashesRE = /^\/+/
+const indentHintRE = /^[ \t]+(?=")/m
+const lineIndentRE = /^[\t ]*/
+const trailingSpacesRE = /[\t ]/
+
 function pagePath(path: string) {
-  return normalizePath(path).replace(/^\/+/, '')
+  return normalizePath(path).replace(leadingSlashesRE, '')
 }
 
 function inRoot(path: string, root: string) {
@@ -33,10 +39,13 @@ function subPagePath(root: string, path: string) {
 
 function orderFields<T>(value: T, firstKey: string): T {
   const entries = Object.entries(value as Record<string, unknown>)
-  const first = entries.find(([key]) => key === firstKey)
-  const rest = entries
-    .filter(([key]) => key !== firstKey)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const rest: [string, unknown][] = []
+  let first: [string, unknown] | undefined
+  for (const entry of entries) {
+    if (entry[0] === firstKey) first = entry
+    else rest.push(entry)
+  }
+  rest.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
   return Object.fromEntries(first ? [first, ...rest] : rest) as T
 }
 
@@ -67,20 +76,23 @@ function allPagePaths(config: PagesConfig) {
 }
 
 function generatedSubPackages(manifest: RouteManifest, existing: SubPackage[], merge: boolean) {
+  // Group routes by sub-package root once instead of filtering per root.
+  const routesByRoot = new Map<string, RouteFileInfo[]>()
+  for (const route of manifest.routes) {
+    if (!route.subPackage) continue
+    const group = routesByRoot.get(route.subPackage)
+    if (group) group.push(route)
+    else routesByRoot.set(route.subPackage, [route])
+  }
   const roots = [
-    ...new Set([
-      ...(merge ? manifest.managedSubPackageRoots : []),
-      ...manifest.routes.flatMap(route => (route.subPackage ? [route.subPackage] : [])),
-    ]),
+    ...new Set([...(merge ? manifest.managedSubPackageRoots : []), ...routesByRoot.keys()]),
   ].sort()
   const excluded = new Set(manifest.excludedPaths)
   const managed: SubPackage[] = []
 
   for (const root of roots) {
     const previous = existing.find(item => pagePath(item.root) === root)
-    const generated = manifest.routes
-      .filter(route => route.subPackage === root)
-      .map(route => orderFields(route.page, 'path'))
+    const generated = (routesByRoot.get(root) ?? []).map(route => orderFields(route.page, 'path'))
     const manual = merge
       ? (previous?.pages ?? [])
           .filter(page => excluded.has(pagePath(subPagePath(root, page.path))))
@@ -152,7 +164,10 @@ export function mergePagesConfig(
   options: Pick<ResolvedUniRouterOptions, 'merge' | 'sort'>,
 ): PagesConfig {
   const existingPages = current.pages ?? []
-  const generated = manifest.routes.filter(route => !route.subPackage).map(route => route.page)
+  const generated: PagesConfig['pages'] = []
+  for (const route of manifest.routes) {
+    if (!route.subPackage) generated.push(route.page)
+  }
   const excluded = new Set(manifest.excludedPaths)
   const manual = options.merge
     ? existingPages.filter(page => {
@@ -190,7 +205,7 @@ export function mergePagesConfig(
 }
 
 function formatting(text: string) {
-  const indent = text.match(/^[ \t]+(?=")/m)?.[0] ?? '  '
+  const indent = text.match(indentHintRE)?.[0] ?? '  '
   return {
     insertSpaces: !indent.includes('\t'),
     tabSize: indent.includes('\t') ? 2 : indent.length,
@@ -239,13 +254,13 @@ function addConditionalComments(
     if (!directives.length) continue
 
     const lineStart = content.lastIndexOf('\n', node.offset - 1) + 1
-    const indent = content.slice(lineStart, node.offset).match(/^[\t ]*/)?.[0] ?? ''
+    const indent = content.slice(lineStart, node.offset).match(lineIndentRE)?.[0] ?? ''
     edits.push({
       offset: node.offset,
       content: directives.map(directive => `// ${directive}\n${indent}`).join(''),
     })
     let closeAt = node.offset + node.length
-    while (closeAt < content.length && /[\t ]/.test(content[closeAt])) closeAt++
+    while (closeAt < content.length && trailingSpacesRE.test(content[closeAt])) closeAt++
     if (content[closeAt] === ',') closeAt++
     const lineBreak = content[closeAt] === '\r' || content[closeAt] === '\n' ? '' : '\n'
     edits.push({

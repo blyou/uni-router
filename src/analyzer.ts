@@ -15,6 +15,10 @@ const constructors: Record<string, RouteQueryValue> = {
   Object: 'object',
 }
 
+const underscoreRE = /_/g
+const platformRE = /^[A-Z0-9]+(?:-[A-Z0-9]+)*$/
+const definePropsRE = /\bdefineProps\b/
+
 interface SourceRange {
   start: number
   end: number
@@ -199,7 +203,7 @@ function querySchema(
 
 // TypeScript 类型只接受大写规范值；这里为未类型化的 JS 页面保留防御性归一化。
 function normalizePlatform(value: string) {
-  return value.trim().replace(/_/g, '-').toUpperCase()
+  return value.trim().replace(underscoreRE, '-').toUpperCase()
 }
 
 function platformList(node: Node, file: string, name: string): string[] {
@@ -212,7 +216,7 @@ function platformList(node: Node, file: string, name: string): string[] {
       fail(file, node, `${name} must contain non-empty platform strings`)
     }
     const platform = normalizePlatform(item)
-    if (!/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(platform)) {
+    if (!platformRE.test(platform)) {
       fail(file, node, `${name} contains an unsupported platform "${item}"`)
     }
     return platform
@@ -407,15 +411,12 @@ export function analyzePage(
     }
     if (block.setup) scriptSetupOffset = contentOffset
     const analysis = analyzeScript(block.content, file)
-    if (analysis.calls.some(call => call.queryVariable) && !block.setup) {
-      fail(file, null, 'definePage return value requires <script setup>')
-    }
-    if (
-      block.setup &&
-      analysis.calls.some(call => call.queryVariable) &&
-      /\bdefineProps\b/.test(block.content)
-    ) {
-      fail(file, null, 'definePage return value cannot be combined with defineProps')
+    const hasQueryVariable = analysis.calls.some(call => call.queryVariable)
+    if (hasQueryVariable) {
+      if (!block.setup) fail(file, null, 'definePage return value requires <script setup>')
+      if (definePropsRE.test(block.content)) {
+        fail(file, null, 'definePage return value cannot be combined with defineProps')
+      }
     }
     return {
       ...analysis,

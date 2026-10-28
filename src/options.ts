@@ -32,10 +32,8 @@ export function resolveOptions(
     const value = typeof dir === 'string' ? { src: dir } : dir
     const absoluteSrc = resolve(resolvedRoot, value.src)
     const base = normalizePath(relative(srcDir, absoluteSrc))
-    if (!base || base === '..' || base.startsWith('../') || isAbsolute(base)) {
-      if (value.subPackage || base === '..' || base.startsWith('../') || isAbsolute(base)) {
-        throw new Error(`[uni-router] Scan directory must be inside srcDir: ${value.src}`)
-      }
+    if (base === '..' || base.startsWith('../') || isAbsolute(base)) {
+      throw new Error(`[uni-router] Scan directory must be inside srcDir: ${value.src}`)
     }
     if (value.subPackage && !base) {
       throw new Error('[uni-router] srcDir itself cannot be a subPackage root')

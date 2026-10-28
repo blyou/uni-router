@@ -137,6 +137,9 @@ function isNavigationMethod(value: unknown): value is NavigationMethod {
   )
 }
 
+const leadingSlashesRE = /^\/+/
+const trailingSlashesRE = /\/+$/
+
 /** 归一化路由路径，移除 query/hash、补齐开头斜杠并合并结尾斜杠 */
 export function normalizeRoutePath(value: string): string {
   let end = value.length
@@ -144,28 +147,29 @@ export function normalizeRoutePath(value: string): string {
   const hash = value.indexOf('#')
   if (query >= 0) end = Math.min(end, query)
   if (hash >= 0) end = Math.min(end, hash)
-  const trimmed = value.slice(0, end).replace(/^\/+/, '').replace(/\/+$/, '')
+  const trimmed = value.slice(0, end).replace(leadingSlashesRE, '').replace(trailingSlashesRE, '')
   return trimmed ? `/${trimmed}` : '/'
 }
 
+const emptyRules: readonly WhitelistRule[] = []
+
+/**
+ * 归一化白名单：字符串规则在注册期预先归一化，避免每次导航时重复解析
+ */
 function normalizeWhitelist(whitelist: Whitelist | undefined): readonly WhitelistRule[] {
-  if (whitelist === undefined) return []
-  const rules =
-    typeof whitelist === 'string' || typeof whitelist === 'function' || whitelist instanceof RegExp
-      ? [whitelist]
-      : [...whitelist]
-  for (const rule of rules) {
-    if (typeof rule !== 'string' && typeof rule !== 'function' && !(rule instanceof RegExp)) {
-      throw new Error('[uni-router] Whitelist rules must be strings, RegExp objects, or functions')
-    }
-  }
-  return rules
+  if (whitelist === undefined) return emptyRules
+  const rules: WhitelistRule[] = Array.isArray(whitelist) ? [...whitelist] : [whitelist]
+  return rules.map(rule => {
+    if (typeof rule === 'string') return normalizeRoutePath(rule)
+    if (typeof rule === 'function' || rule instanceof RegExp) return rule
+    throw new Error('[uni-router] Whitelist rules must be strings, RegExp objects, or functions')
+  })
 }
 
 function matchesWhitelist(rules: readonly WhitelistRule[], location: RouteLocation): boolean {
   for (const rule of rules) {
     if (typeof rule === 'string') {
-      if (normalizeRoutePath(rule) === location.path) return true
+      if (rule === location.path) return true
     } else if (rule instanceof RegExp) {
       rule.lastIndex = 0
       if (rule.test(location.path)) return true
@@ -267,6 +271,9 @@ export function runBeforeGuards(
   to: NavigationTarget,
   from: RouteLocation | null,
 ): NavigationGuardDecision {
+  if (interceptors.size === 0) return { type: 'allow' }
+  // Snapshot so guards that register or remove interceptors mid-run do not
+  // affect the current pass.
   const records = Array.from(interceptors)
   for (const record of records) {
     if (matchesWhitelist(record.whitelist, to)) continue
@@ -286,6 +293,7 @@ export function runNotFoundGuards(
   to: NavigationTarget,
   from: RouteLocation | null,
 ): NavigationGuardDecision {
+  if (interceptors.size === 0) return { type: 'allow' }
   for (const record of Array.from(interceptors)) {
     if (matchesWhitelist(record.whitelist, to)) continue
     const decision = runGuard(record.notFound, to, from)
@@ -296,6 +304,7 @@ export function runNotFoundGuards(
 
 /** 是否存在需要参与本次导航的 afterEach；用于决定是否包装原生回调 */
 export function hasAfterHooks(to: NavigationTarget): boolean {
+  if (interceptors.size === 0) return false
   for (const record of interceptors) {
     if (record.afterEach && !matchesWhitelist(record.whitelist, to)) return true
   }
@@ -308,6 +317,7 @@ export function runAfterHooks(
   from: RouteLocation | null,
   result: NavigationResult,
 ): void {
+  if (interceptors.size === 0) return
   for (const record of Array.from(interceptors)) {
     if (!record.afterEach || matchesWhitelist(record.whitelist, to)) continue
     try {

@@ -9,6 +9,9 @@ interface GeneratedNames {
   usePageQuery: string
 }
 
+const whitespaceRE = /\s/
+const spacesAndTabsRE = /[ \t]/
+
 function uniqueIdentifier(code: string, base: string) {
   let name = base
   let index = 1
@@ -18,7 +21,7 @@ function uniqueIdentifier(code: string, base: string) {
 
 function firstToken(code: string, offset: number) {
   let index = offset
-  while (index < code.length && /\s/.test(code[index])) index++
+  while (index < code.length && whitespaceRE.test(code[index])) index++
   return index
 }
 
@@ -69,12 +72,12 @@ function removeImportSpecifiers(code: string, magic: MagicString, analysis: Page
       let start = specifier.start
       let end = specifier.end
       let cursor = end
-      while (cursor < code.length && /[ \t]/.test(code[cursor])) cursor++
+      while (cursor < code.length && spacesAndTabsRE.test(code[cursor])) cursor++
       if (code[cursor] === ',') {
         end = cursor + 1
-        while (end < code.length && /[ \t]/.test(code[end])) end++
+        while (end < code.length && spacesAndTabsRE.test(code[end])) end++
       } else {
-        while (start > declaration.start && /[ \t]/.test(code[start - 1])) start--
+        while (start > declaration.start && spacesAndTabsRE.test(code[start - 1])) start--
         if (code[start - 1] === ',') start--
       }
       magic.remove(start, end)

@@ -1,7 +1,12 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { HmrContext, Plugin, ViteDevServer } from 'vite'
-import { generateDeclarations, generateVirtualModule, writeDeclarations } from './generator'
+import {
+  generateDeclarations,
+  generateVirtualModule,
+  runtimeRoutes,
+  writeDeclarations,
+} from './generator'
 import type { ResolvedUniRouterOptions } from './options'
 import { updatePagesJson } from './pages-json'
 import { createScanCache, resolveOptions, scanPages } from './scanner'
@@ -13,6 +18,7 @@ import { inside } from './utils'
 
 const virtualId = '@blyou/uni-router/auto-routes'
 const resolvedVirtualId = `\0${virtualId}`
+const pageFileRE = /\.(?:vue|nvue|uvue)$/
 
 export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
   let options: ResolvedUniRouterOptions
@@ -29,9 +35,10 @@ export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
     const run = queue.then(async () => {
       const nextManifest = await scanPages(options, cache)
       const pages = await updatePagesJson(options, nextManifest)
-      const declarations = generateDeclarations(nextManifest.routes, pages.config)
+      const runtime = runtimeRoutes(nextManifest.routes, pages.config)
+      const declarations = generateDeclarations(nextManifest.routes, pages.config, runtime)
       const dtsChanged = options.dts ? await writeDeclarations(options.dts, declarations) : false
-      const nextVirtualCode = generateVirtualModule(nextManifest.routes, pages.config)
+      const nextVirtualCode = generateVirtualModule(nextManifest.routes, pages.config, runtime)
       const changed = pages.changed || dtsChanged || nextVirtualCode !== virtualCode
       virtualCode = nextVirtualCode
       lastManifest = nextManifest
@@ -50,21 +57,31 @@ export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
     if (module) server?.moduleGraph.invalidateModule(module)
   }
 
-  const relevant = (file: string) => {
-    const absoluteFile = resolve(file)
+  const relevant = (absoluteFile: string) => {
     if (absoluteFile === options.pagesJson) return true
     if (options.dts && absoluteFile === options.dts) return false
     return options.dirs.some(dir => inside(absoluteFile, dir.src))
   }
 
-  const reload = async (file?: string) => {
+  const reload = async (absoluteFile?: string) => {
     const changed = await regenerate()
     if (changed) invalidate()
-    if (changed || (file && resolve(file) === options.pagesJson)) {
+    if (changed || absoluteFile === options.pagesJson) {
       server?.ws.send({ type: 'full-reload', path: '*' })
       return true
     }
     return false
+  }
+
+  /**
+   * 重新扫描并按需刷新页面；`file` 为触发变更的文件。
+   * `pages.json` 内容未变时跳过，避免写回自身触发的循环刷新。
+   */
+  const syncPages = async (file: string) => {
+    const absoluteFile = resolve(file)
+    if (!relevant(absoluteFile)) return false
+    if (absoluteFile === options.pagesJson && !(await pagesJsonChanged(absoluteFile))) return false
+    return reload(absoluteFile)
   }
 
   const pagesJsonChanged = async (file: string) => {
@@ -116,43 +133,31 @@ export default function UniRouter(userOptions: UniRouterOptions = {}): Plugin {
       if (!options.watch) return
       server.watcher.add([...options.dirs.map(dir => dir.src), options.pagesJson])
       const onStructureChange = (file: string) => {
-        if (!relevant(file)) return
-        const run =
-          resolve(file) === options.pagesJson
-            ? pagesJsonChanged(resolve(file)).then(changed => (changed ? reload(file) : false))
-            : reload(file)
-        void run.catch(reportWatchError)
+        void syncPages(file).catch(reportWatchError)
       }
       const onPagesJsonChange = (file: string) => {
         if (resolve(file) !== options.pagesJson) return
-        void pagesJsonChanged(resolve(file))
-          .then(changed => (changed ? reload(file) : false))
-          .catch(reportWatchError)
+        void syncPages(file).catch(reportWatchError)
       }
       server.watcher.on('add', onStructureChange)
       server.watcher.on('unlink', onStructureChange)
       server.watcher.on('change', onPagesJsonChange)
     },
     async handleHotUpdate(context: HmrContext) {
-      if (!options.watch || !relevant(context.file)) return
-      if (
-        resolve(context.file) === options.pagesJson &&
-        !(await pagesJsonChanged(options.pagesJson))
-      )
-        return
-      if (await reload(context.file)) return []
+      if (!options.watch) return
+      if (await syncPages(context.file)) return []
     },
     async watchChange(id) {
-      if (server || !options.watch || !relevant(id)) return
-      if (resolve(id) === options.pagesJson && !(await pagesJsonChanged(options.pagesJson))) return
+      if (server || !options.watch) return
+      const absoluteFile = resolve(id)
+      if (!relevant(absoluteFile)) return
+      if (absoluteFile === options.pagesJson && !(await pagesJsonChanged(absoluteFile))) return
       await regenerate()
     },
     async transform(code, id) {
-      if (id.includes('?')) return
-      const file = id
-      if (!/\.(?:vue|nvue|uvue)$/.test(file) || !code.includes('definePage')) return
+      if (id.includes('?') || !pageFileRE.test(id) || !code.includes('definePage')) return
       parserPromise ??= loadSfcParser(options.root, options.compilerSfc)
-      return transformPage(code, file, await parserPromise)
+      return transformPage(code, id, await parserPromise)
     },
   }
 }

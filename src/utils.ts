@@ -3,7 +3,8 @@ import { dirname, isAbsolute, relative } from 'node:path'
 
 /** Normalize a file-system path to the forward-slash form used in manifests. */
 export function normalizePath(path: string) {
-  return path.replace(/\\/g, '/').replace(/^\.\//, '')
+  const normalized = path.replaceAll('\\', '/')
+  return normalized.startsWith('./') ? normalized.slice(2) : normalized
 }
 
 /** Whether `file` is `directory` itself or one of its descendants. */

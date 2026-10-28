@@ -101,14 +101,8 @@ function parseUrl(url: string): ParsedUrl {
   return { path, url: rawQuery ? `${path}?${rawQuery}` : path, query }
 }
 
-function createTarget(
-  method: NavigationMethod,
-  route: UniRouteInfo | undefined,
-  url: string,
-): NavigationTarget {
-  const parsed = parseUrl(url)
+function locationFromParsed(route: UniRouteInfo | undefined, parsed: ParsedUrl): RouteLocation {
   return {
-    method,
     path: parsed.path,
     url: parsed.url,
     query: parsed.query,
@@ -117,6 +111,22 @@ function createTarget(
     querySchema: route?.query ?? {},
     subPackage: route?.subPackage,
   }
+}
+
+function targetFromParsed(
+  method: NavigationMethod,
+  route: UniRouteInfo | undefined,
+  parsed: ParsedUrl,
+): NavigationTarget {
+  return { method, ...locationFromParsed(route, parsed) }
+}
+
+function createTarget(
+  method: NavigationMethod,
+  route: UniRouteInfo | undefined,
+  url: string,
+): NavigationTarget {
+  return targetFromParsed(method, route, parseUrl(url))
 }
 
 type CurrentPageLike = Page.PageInstance & {
@@ -137,16 +147,7 @@ function currentLocation(): RouteLocation | null {
     typeof page.route === 'string' ? page.route : (page.$page?.fullPath ?? page.$page?.path)
   if (typeof raw !== 'string' || !raw) return null
   const parsed = parseUrl(raw)
-  const route = routesByPath.get(parsed.path)
-  return {
-    path: parsed.path,
-    url: parsed.url,
-    query: parsed.query,
-    meta: route?.meta ?? {},
-    tab: route?.tab ?? false,
-    querySchema: route?.query ?? {},
-    subPackage: route?.subPackage,
-  }
+  return locationFromParsed(routesByPath.get(parsed.path), parsed)
 }
 
 function queryValue(path: string, name: string, type: string, value: unknown) {
@@ -292,10 +293,12 @@ function dispatchNavigation(
 ) {
   let nativeOptions: NativeNavigationOptions = { ...options, url: target.url }
   if (hasAfterHooks(target)) {
-    const success = callback(nativeOptions, 'success')
-    const fail = callback(nativeOptions, 'fail')
+    // Read the user callbacks from the original options; the wrapper must not recurse.
+    const success = callback(options, 'success')
+    const fail = callback(options, 'fail')
     nativeOptions = {
-      ...nativeOptions,
+      ...options,
+      url: target.url,
       success(result: unknown) {
         runAfterHooks(target, from, { status: 'success', data: result })
         success?.(result)
@@ -338,7 +341,8 @@ function redirectNavigation(
       error(parsed.path, 'switchTab does not support query parameters')
     }
   }
-  proceedNavigation(method, createTarget(method, route, parsed.url), {}, from, depth)
+  // Reuse the parsed location instead of parsing the redirect url twice.
+  proceedNavigation(method, targetFromParsed(method, route, parsed), {}, from, depth)
 }
 
 function createMissingTarget(method: NavigationMethod, location: ParsedUrl): NavigationTarget {

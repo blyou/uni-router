@@ -25,6 +25,7 @@ export interface SfcParseResult {
 export type SfcParser = (source: string, options: { filename: string }) => SfcParseResult
 
 const parserCache = new Map<string, Promise<SfcParser>>()
+const resolvedCompilerCache = new Map<string, string>()
 
 function resolveCompiler(root: string, compiler: string) {
   const roots = compiler === '@vue/compiler-sfc' ? [root, process.cwd()] : [root]
@@ -32,14 +33,13 @@ function resolveCompiler(root: string, compiler: string) {
     try {
       const require = createRequire(resolve(directory, 'package.json'))
       return require.resolve(compiler)
-    }
-    catch {
+    } catch {
       continue
     }
   }
   throw new Error(
-    `[uni-router] Cannot resolve "${compiler}" from ${root}. `
-    + 'Install a compatible @vue/compiler-sfc or configure the compilerSfc option.',
+    `[uni-router] Cannot resolve "${compiler}" from ${root}. ` +
+      'Install a compatible @vue/compiler-sfc or configure the compilerSfc option.',
   )
 }
 
@@ -52,8 +52,17 @@ function compilerParser(module: unknown): SfcParser {
   return parse
 }
 
-export async function loadSfcParser(root: string, compiler = '@vue/compiler-sfc'): Promise<SfcParser> {
-  const resolved = resolveCompiler(root, compiler)
+export async function loadSfcParser(
+  root: string,
+  compiler = '@vue/compiler-sfc',
+): Promise<SfcParser> {
+  // Resolving the compiler walks node_modules; memoize it so repeated scans stay cheap.
+  const resolveKey = `${root}\0${compiler}`
+  let resolved = resolvedCompilerCache.get(resolveKey)
+  if (resolved === undefined) {
+    resolved = resolveCompiler(root, compiler)
+    resolvedCompilerCache.set(resolveKey, resolved)
+  }
   let parser = parserCache.get(resolved)
   if (!parser) {
     parser = import(pathToFileURL(resolved).href).then(compilerParser)

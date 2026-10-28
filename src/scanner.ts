@@ -117,7 +117,8 @@ export async function scanPages(
         : undefined,
     ])
     const relativeFiles = allFiles.map(normalizePath).sort()
-    const included = new Set((includedFiles ?? allFiles).map(normalizePath))
+    // Without exclude rules every scanned file is included, so reuse the normalized list.
+    const included = new Set(includedFiles ? includedFiles.map(normalizePath) : relativeFiles)
     jobs.push(...collectJobs(options, dir, relativeFiles, included, seen, excludedPaths))
   }
 

@@ -33,8 +33,15 @@ function queryType(route: RouteFileInfo) {
     .join('\n')}\n      }`
 }
 
-export function generateDeclarations(routes: RouteFileInfo[], config: PagesConfig) {
-  const runtime = runtimeRoutes(routes, config)
+/**
+ * Generates the `UniRouteMap` declaration from a manifest.
+ * @param runtime precomputed `runtimeRoutes(routes, config)`; computed when omitted
+ */
+export function generateDeclarations(
+  routes: RouteFileInfo[],
+  config: PagesConfig,
+  runtime: UniRouteInfo[] = runtimeRoutes(routes, config),
+) {
   const records = runtime.map((route, index) => {
     const source = routes[index]
     return [
@@ -68,8 +75,16 @@ export {}
 `
 }
 
-export function generateVirtualModule(routes: RouteFileInfo[], config: PagesConfig) {
-  const manifest = JSON.stringify(runtimeRoutes(routes, config))
+/**
+ * Generates the virtual module source exporting the runtime route manifest.
+ * @param runtime precomputed `runtimeRoutes(routes, config)`; computed when omitted
+ */
+export function generateVirtualModule(
+  routes: RouteFileInfo[],
+  config: PagesConfig,
+  runtime: readonly UniRouteInfo[] = runtimeRoutes(routes, config),
+) {
+  const manifest = JSON.stringify(runtime)
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029')
   return `export const routes = Object.freeze(JSON.parse(${JSON.stringify(manifest)}))\n`
